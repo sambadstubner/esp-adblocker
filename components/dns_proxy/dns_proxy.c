@@ -27,6 +27,7 @@ extern const uint8_t bloom_bin_end[] asm("_binary_bloom_bin_end");
 
 static bloom_filter_t s_bloom;
 static bool s_bloom_ready = false;
+static bool s_bloom_from_seed = false;
 static esp_partition_mmap_handle_t s_bloom_mmap_handle;
 static bool s_bloom_mmap_active = false;
 
@@ -44,6 +45,7 @@ static int s_listen_sock = -1;
 static int s_upstream_sock = -1;
 static uint8_t s_upstream_index = 0; // 0 -> upstream1, 1 -> upstream2
 static int s_consecutive_timeouts = 0;
+static dns_proxy_stats_t s_stats;
 
 static uint32_t current_upstream_ip(void)
 {
@@ -142,6 +144,7 @@ void dns_proxy_reload_bloom_filter(void)
     uint8_t active = app_config_get_bloom_active_slot();
     if (try_load_bloom_from_partition(active)) {
         s_bloom_ready = true;
+        s_bloom_from_seed = false;
         ESP_LOGI(TAG, "bloom filter loaded from flash (slot %u): %llu domains, %llu bits, k=%u", active,
                  (unsigned long long)s_bloom.header->n_domains,
                  (unsigned long long)s_bloom.header->m_bits,
@@ -152,6 +155,7 @@ void dns_proxy_reload_bloom_filter(void)
     size_t len = (size_t)(bloom_bin_end - bloom_bin_start);
     if (bloom_filter_init(bloom_bin_start, len, &s_bloom)) {
         s_bloom_ready = true;
+        s_bloom_from_seed = true;
         ESP_LOGW(TAG, "flash slot %u empty/invalid - using embedded seed filter: "
                        "%llu domains, %llu bits, k=%u", active,
                  (unsigned long long)s_bloom.header->n_domains,
@@ -170,7 +174,7 @@ void dns_proxy_reload_bloom_filter(void)
 static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_t n,
                        const dns_wire_question_t *q)
 {
-    if (!s_bloom_ready || !bloom_filter_test(&s_bloom, q->qname)) {
+    if (!app_config_get_blocking_enabled() || !s_bloom_ready || !bloom_filter_test(&s_bloom, q->qname)) {
         return false;
     }
 
@@ -208,12 +212,14 @@ static void handle_client_datagram(void)
     if (n <= 0) {
         return;
     }
+    s_stats.queries_total++;
 
     dns_wire_question_t q;
     bool have_question = dns_wire_parse_question(buf, (size_t)n, &q);
     if (have_question) {
         ESP_LOGD(TAG, "query from %s: %s type=%u", inet_ntoa(client_addr.sin_addr), q.qname, q.qtype);
         if (try_block(&client_addr, buf, (size_t)n, &q)) {
+            s_stats.queries_blocked++;
             return; // blocked - do not forward upstream
         }
     }
@@ -224,6 +230,7 @@ static void handle_client_datagram(void)
     if (slot < 0) {
         ESP_LOGW(TAG, "pending table full, replying SERVFAIL immediately");
         send_error_to_client(&client_addr, buf, (size_t)n, DNS_RCODE_SERVFAIL);
+        s_stats.queries_servfail++;
         return;
     }
 
@@ -241,6 +248,7 @@ static void handle_client_datagram(void)
         ESP_LOGW(TAG, "send() to upstream failed: errno %d", errno);
     }
     p->in_use = true;
+    s_stats.queries_forwarded++;
 }
 
 static void handle_upstream_datagram(void)
@@ -275,6 +283,7 @@ static void sweep_timeouts(void)
         dns_wire_set_txid(p->query_buf, p->query_len, p->client_txid);
         send_error_to_client(&p->client_addr, p->query_buf, p->query_len, DNS_RCODE_SERVFAIL);
         p->in_use = false;
+        s_stats.queries_servfail++;
         s_consecutive_timeouts++;
         if (s_consecutive_timeouts >= CONFIG_DNS_PROXY_UPSTREAM_FAIL_THRESHOLD) {
             fail_over_upstream();
@@ -306,8 +315,36 @@ static void dns_proxy_task(void *arg)
     }
 }
 
+void dns_proxy_get_stats(dns_proxy_stats_t *out)
+{
+    *out = s_stats;
+}
+
+void dns_proxy_get_bloom_info(dns_proxy_bloom_info_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->ready = s_bloom_ready;
+    out->from_embedded_seed = s_bloom_from_seed;
+    if (s_bloom_ready) {
+        out->n_domains = s_bloom.header->n_domains;
+        out->m_bits = s_bloom.header->m_bits;
+        out->k_hashes = s_bloom.header->k_hashes;
+        out->build_unix_ts = s_bloom.header->build_unix_ts;
+    }
+}
+
+void dns_proxy_apply_upstream_config(void)
+{
+    s_upstream_index = 0;
+    s_consecutive_timeouts = 0;
+    connect_upstream_socket();
+}
+
 esp_err_t dns_proxy_start(void)
 {
+    memset(&s_stats, 0, sizeof(s_stats));
+    s_stats.start_time_us = esp_timer_get_time();
+
     dns_proxy_reload_bloom_filter();
 
     struct sockaddr_in listen_addr = {

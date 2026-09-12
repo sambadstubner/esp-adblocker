@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esp-dns</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1a1d21; --muted: #6b7280;
+    --border: #e2e4e9; --accent: #2f6fed; --accent-text: #ffffff;
+    --danger: #d1453b; --ok: #1a8754; --warn: #b8860b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --card: #1f2229; --text: #e7e9ec; --muted: #9aa1ab;
+      --border: #2c3038; --accent: #5b8dfc; --accent-text: #0b0d10;
+      --danger: #ff6b62; --ok: #3fcf82; --warn: #e0b03f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.5;
+  }
+  h1 { font-size: 20px; margin: 0 0 20px; }
+  h2 { font-size: 15px; margin: 0 0 14px; }
+  .wrap { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; }
+  .stat-label { color: var(--muted); font-size: 13px; }
+  .stat-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input[type=text], select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  button {
+    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); font-size: 14px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+  button.danger { background: var(--danger); color: #fff; border-color: transparent; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .switch { position: relative; display: inline-block; width: 42px; height: 24px; vertical-align: middle; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--border); border-radius: 24px; transition: .15s; cursor: pointer; }
+  .slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .15s; }
+  input:checked + .slider { background: var(--ok); }
+  input:checked + .slider::before { transform: translateX(18px); }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--danger); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .url-row { display: flex; gap: 8px; align-items: flex-start; }
+  .url-row input { flex: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>esp-dns</h1>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="grid" id="status-grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="toggle-row">
+      <div>
+        <h2 style="margin-bottom:2px">Ad blocking</h2>
+        <div class="hint">Master switch - when off, all queries pass through untouched.</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="blocking-enabled" onchange="toggleBlocking()">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Settings</h2>
+    <label>Block response</label>
+    <select id="block-policy">
+      <option value="0">NXDOMAIN</option>
+      <option value="1">0.0.0.0 / ::</option>
+    </select>
+
+    <div class="row">
+      <div>
+        <label>Upstream resolver 1</label>
+        <input type="text" id="upstream1" placeholder="1.1.1.1">
+      </div>
+      <div>
+        <label>Upstream resolver 2</label>
+        <input type="text" id="upstream2" placeholder="8.8.8.8">
+      </div>
+    </div>
+
+    <label>Network mode</label>
+    <select id="net-mode" onchange="updateNetModeVisibility()">
+      <option value="0">DHCP</option>
+      <option value="1">Static IP</option>
+    </select>
+    <div id="static-ip-fields" style="display:none">
+      <div class="row">
+        <div>
+          <label>IP address</label>
+          <input type="text" id="static-ip" placeholder="192.168.1.50">
+        </div>
+        <div>
+          <label>Subnet mask</label>
+          <input type="text" id="static-mask" placeholder="255.255.255.0">
+        </div>
+        <div>
+          <label>Gateway</label>
+          <input type="text" id="static-gw" placeholder="192.168.1.1">
+        </div>
+      </div>
+      <div class="hint">Network changes require a reboot to take effect.</div>
+    </div>
+
+    <div class="actions" style="margin-top:16px">
+      <button class="primary" onclick="saveSettings()">Save settings</button>
+    </div>
+    <div class="msg" id="settings-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Blocklist &amp; firmware sources</h2>
+    <label>Blocklist base URL</label>
+    <div class="url-row">
+      <input type="text" id="blocklist-url" placeholder="https://raw.githubusercontent.com/you/repo/main/blocklist">
+      <button onclick="saveUrl('blocklist_url', 'blocklist-url', 'blocklist-msg')">Update</button>
+    </div>
+    <div class="msg" id="blocklist-msg"></div>
+
+    <label>Firmware release URL</label>
+    <div class="url-row">
+      <input type="text" id="fw-url" placeholder="https://github.com/you/repo/releases/download/vX/esp-dns.bin">
+      <button onclick="saveUrl('fw_update_url', 'fw-url', 'fw-msg')">Update</button>
+    </div>
+    <div class="msg" id="fw-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Actions</h2>
+    <div class="actions">
+      <button onclick="triggerAction('/api/update/blocklist', 'Check for a blocklist update now?', 'action-msg')">Check blocklist update</button>
+      <button onclick="triggerAction('/api/update/firmware', 'Download and install the configured firmware release now? The device will reboot if successful.', 'action-msg')">Check firmware update</button>
+      <button class="danger" onclick="triggerAction('/api/reboot', 'Reboot the device now?', 'action-msg')">Reboot</button>
+    </div>
+    <div class="msg" id="action-msg"></div>
+  </div>
+</div>
+
+<script>
+let originalConfig = {};
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
+}
+
+function statRow(label, value) {
+  return `<div class="stat-label">${label}</div><div class="stat-value">${value}</div>`;
+}
+
+async function loadStatus() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  const bloomState = s.bloom_ready ? (s.bloom_from_seed ? "seed (no update yet)" : "flash slot " + s.bloom_active_slot) : "unavailable";
+  document.getElementById('status-grid').innerHTML =
+    statRow('Uptime', fmtUptime(s.uptime_s)) +
+    statRow('Ethernet IP', s.eth_ip || '—') +
+    statRow('Queries total', s.queries_total) +
+    statRow('Queries blocked', s.queries_blocked) +
+    statRow('Forwarded', s.queries_forwarded) +
+    statRow('SERVFAIL', s.queries_servfail) +
+    statRow('Bloom filter', bloomState) +
+    statRow('Blocked domains', s.bloom_domains) +
+    statRow('SD card', s.sd_mounted ? 'mounted' : 'not mounted') +
+    statRow('Firmware', s.fw_version) +
+    statRow('Free heap', Math.round(s.free_heap / 1024) + ' KB') +
+    statRow('Free PSRAM', Math.round(s.free_psram / 1024) + ' KB');
+}
+
+function updateNetModeVisibility() {
+  document.getElementById('static-ip-fields').style.display =
+    document.getElementById('net-mode').value === '1' ? 'block' : 'none';
+}
+
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const c = await r.json();
+  originalConfig = c;
+  document.getElementById('blocking-enabled').checked = !!c.blocking_enabled;
+  document.getElementById('block-policy').value = c.block_policy;
+  document.getElementById('upstream1').value = c.upstream1 || '';
+  document.getElementById('upstream2').value = c.upstream2 || '';
+  document.getElementById('net-mode').value = c.net_mode;
+  document.getElementById('static-ip').value = c.static_ip || '';
+  document.getElementById('static-mask').value = c.static_mask || '';
+  document.getElementById('static-gw').value = c.static_gw || '';
+  document.getElementById('blocklist-url').value = c.blocklist_url || '';
+  document.getElementById('fw-url').value = c.fw_update_url || '';
+  updateNetModeVisibility();
+}
+
+async function postConfig(payload) {
+  const r = await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+  return r.json();
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+
+async function toggleBlocking() {
+  const enabled = document.getElementById('blocking-enabled').checked;
+  await postConfig({ blocking_enabled: enabled });
+}
+
+async function saveSettings() {
+  const payload = {
+    block_policy: parseInt(document.getElementById('block-policy').value, 10),
+    upstream1: document.getElementById('upstream1').value.trim(),
+    upstream2: document.getElementById('upstream2').value.trim(),
+    net_mode: parseInt(document.getElementById('net-mode').value, 10),
+  };
+  if (payload.net_mode === 1) {
+    payload.static_ip = document.getElementById('static-ip').value.trim();
+    payload.static_mask = document.getElementById('static-mask').value.trim();
+    payload.static_gw = document.getElementById('static-gw').value.trim();
+  }
+  const res = await postConfig(payload);
+  if (res.ok) {
+    showMsg('settings-msg', res.reboot_required ? 'Saved - reboot required for network changes to take effect.' : 'Saved.', true);
+  } else {
+    showMsg('settings-msg', res.error || 'Failed to save.', false);
+  }
+}
+
+async function saveUrl(field, inputId, msgId) {
+  const value = document.getElementById(inputId).value.trim();
+  if (!confirm('Change ' + field.replace('_', ' ') + ' to:\n\n' + value + '\n\nThe device will fetch from this URL. Continue?')) {
+    return;
+  }
+  const payload = {};
+  payload[field] = value;
+  const res = await postConfig(payload);
+  showMsg(msgId, res.ok ? 'Saved.' : (res.error || 'Failed to save.'), res.ok);
+}
+
+async function triggerAction(path, confirmText, msgId) {
+  if (!confirm(confirmText)) {
+    return;
+  }
+  const r = await fetch(path, { method: 'POST' });
+  const res = await r.json();
+  showMsg(msgId, res.ok ? 'Started.' : (res.error || 'Failed.'), res.ok);
+}
+
+loadStatus();
+loadConfig();
+setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>

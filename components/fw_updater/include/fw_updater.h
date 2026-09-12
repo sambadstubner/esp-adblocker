@@ -17,6 +17,14 @@ extern "C" {
 esp_err_t fw_updater_check_and_update(const char *url);
 
 /**
+ * Spawns a dedicated, generously-stacked task that calls
+ * fw_updater_check_and_update(url) - chained HTTPS/mbedTLS calls need more
+ * stack than most caller contexts provide (e.g. the httpd worker task
+ * handling a web UI request). Returns immediately.
+ */
+void fw_updater_check_and_update_async(const char *url);
+
+/**
  * Call once from app_main after starting networking. If this boot is a
  * freshly-OTA'd image still pending verification, waits (bounded) for the
  * network to come up and either confirms the image as valid (cancelling

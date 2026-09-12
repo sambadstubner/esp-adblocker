@@ -1,5 +1,8 @@
 #include "fw_updater.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 #include "esp_crt_bundle.h"
 #include "esp_https_ota.h"
 #include "esp_log.h"
@@ -63,4 +66,28 @@ static void confirm_boot_task(void *arg)
 void fw_updater_confirm_boot_if_healthy(void)
 {
     xTaskCreate(confirm_boot_task, "fw_confirm", 3072, NULL, 4, NULL);
+}
+
+#define ASYNC_TASK_STACK_SIZE 8192
+
+static void async_update_task(void *arg)
+{
+    char *url = (char *)arg;
+    esp_err_t err = fw_updater_check_and_update(url); // reboots on success; only returns on failure
+    ESP_LOGE(TAG, "async OTA failed: %s", esp_err_to_name(err));
+    free(url);
+    vTaskDelete(NULL);
+}
+
+void fw_updater_check_and_update_async(const char *url)
+{
+    char *url_copy = strdup(url);
+    if (url_copy == NULL) {
+        ESP_LOGE(TAG, "strdup failed, cannot start OTA");
+        return;
+    }
+    if (xTaskCreate(async_update_task, "fw_update", ASYNC_TASK_STACK_SIZE, url_copy, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate failed, cannot start OTA");
+        free(url_copy);
+    }
 }

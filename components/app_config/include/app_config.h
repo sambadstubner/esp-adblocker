@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_netif_ip_addr.h"
@@ -44,6 +45,11 @@ esp_err_t app_config_set_upstream2(uint32_t ip4);
 
 app_config_block_policy_t app_config_get_block_policy(void);
 esp_err_t app_config_set_block_policy(app_config_block_policy_t policy);
+
+/** Master on/off switch for blocking. When false, dns_proxy is pure pass-through
+ * regardless of bloom filter/exact-list contents. Default true. */
+bool app_config_get_blocking_enabled(void);
+esp_err_t app_config_set_blocking_enabled(bool enabled);
 
 /** out_buf must be at least 256 bytes. Empty string if never configured. */
 esp_err_t app_config_get_blocklist_url(char *out_buf, size_t buf_len);

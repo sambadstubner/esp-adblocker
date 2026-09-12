@@ -91,6 +91,19 @@ esp_err_t app_config_set_block_policy(app_config_block_policy_t policy)
     return nvs_commit(s_handle);
 }
 
+bool app_config_get_blocking_enabled(void)
+{
+    uint8_t v = 1; // default: blocking on
+    nvs_get_u8(s_handle, "block_en", &v);
+    return v != 0;
+}
+
+esp_err_t app_config_set_blocking_enabled(bool enabled)
+{
+    ESP_RETURN_ON_ERROR(nvs_set_u8(s_handle, "block_en", enabled ? 1 : 0), TAG, "set block_en failed");
+    return nvs_commit(s_handle);
+}
+
 esp_err_t app_config_get_blocklist_url(char *out_buf, size_t buf_len)
 {
     esp_err_t err = nvs_get_str(s_handle, "blocklist_url", out_buf, &buf_len);
