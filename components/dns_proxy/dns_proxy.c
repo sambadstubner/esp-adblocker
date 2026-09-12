@@ -11,6 +11,7 @@
 #include "dns_wire.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_partition.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,13 +19,16 @@
 
 static const char *TAG = "dns_proxy";
 
-// Embedded by the EMBED_FILES directive in CMakeLists.txt (Phase 4 scaffolding
-// - Phase 6 replaces this with a flash-partition-backed, HTTPS-updatable filter).
+// Embedded fallback seed filter (see blocklist/bloom.bin), used only when the
+// active bloom_a/bloom_b flash partition is empty or fails to parse - e.g. a
+// brand new device that hasn't completed its first blocklist_updater run yet.
 extern const uint8_t bloom_bin_start[] asm("_binary_bloom_bin_start");
 extern const uint8_t bloom_bin_end[] asm("_binary_bloom_bin_end");
 
 static bloom_filter_t s_bloom;
 static bool s_bloom_ready = false;
+static esp_partition_mmap_handle_t s_bloom_mmap_handle;
+static bool s_bloom_mmap_active = false;
 
 typedef struct {
     bool in_use;
@@ -95,17 +99,67 @@ static void send_error_to_client(const struct sockaddr_in *to, uint8_t *buf, siz
     sendto(s_listen_sock, buf, len, 0, (const struct sockaddr *)to, sizeof(*to));
 }
 
-static void init_bloom_filter(void)
+static bool try_load_bloom_from_partition(uint8_t slot)
 {
+    const char *label = slot == 0 ? "bloom_a" : "bloom_b";
+    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (part == NULL) {
+        ESP_LOGW(TAG, "partition %s not found", label);
+        return false;
+    }
+
+    if (s_bloom_mmap_active) {
+        esp_partition_munmap(s_bloom_mmap_handle);
+        s_bloom_mmap_active = false;
+    }
+
+    const void *mapped = NULL;
+    esp_partition_mmap_handle_t handle;
+    esp_err_t err = esp_partition_mmap(part, 0, part->size, ESP_PARTITION_MMAP_DATA, &mapped, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mmap of %s failed: %s", label, esp_err_to_name(err));
+        return false;
+    }
+
+    if (!bloom_filter_init((const uint8_t *)mapped, part->size, &s_bloom)) {
+        esp_partition_munmap(handle);
+        return false; // blank (freshly-erased) or corrupt slot
+    }
+
+    s_bloom_mmap_handle = handle;
+    s_bloom_mmap_active = true;
+    return true;
+}
+
+/**
+ * (Re)loads the bloom filter from the currently-active flash slot, falling
+ * back to the embedded seed filter if that slot is empty/invalid. Call this
+ * at startup and again after blocklist_updater successfully activates a new
+ * slot, so an update takes effect without a reboot.
+ */
+void dns_proxy_reload_bloom_filter(void)
+{
+    uint8_t active = app_config_get_bloom_active_slot();
+    if (try_load_bloom_from_partition(active)) {
+        s_bloom_ready = true;
+        ESP_LOGI(TAG, "bloom filter loaded from flash (slot %u): %llu domains, %llu bits, k=%u", active,
+                 (unsigned long long)s_bloom.header->n_domains,
+                 (unsigned long long)s_bloom.header->m_bits,
+                 (unsigned)s_bloom.header->k_hashes);
+        return;
+    }
+
     size_t len = (size_t)(bloom_bin_end - bloom_bin_start);
     if (bloom_filter_init(bloom_bin_start, len, &s_bloom)) {
         s_bloom_ready = true;
-        ESP_LOGI(TAG, "bloom filter loaded: %llu domains, %llu bits, k=%u",
+        ESP_LOGW(TAG, "flash slot %u empty/invalid - using embedded seed filter: "
+                       "%llu domains, %llu bits, k=%u", active,
                  (unsigned long long)s_bloom.header->n_domains,
                  (unsigned long long)s_bloom.header->m_bits,
                  (unsigned)s_bloom.header->k_hashes);
     } else {
-        ESP_LOGE(TAG, "embedded bloom.bin failed to parse (bad header?) - blocking disabled");
+        s_bloom_ready = false;
+        ESP_LOGE(TAG, "embedded seed bloom.bin also failed to parse - blocking disabled");
     }
 }
 
@@ -254,7 +308,7 @@ static void dns_proxy_task(void *arg)
 
 esp_err_t dns_proxy_start(void)
 {
-    init_bloom_filter();
+    dns_proxy_reload_bloom_filter();
 
     struct sockaddr_in listen_addr = {
         .sin_family = AF_INET,

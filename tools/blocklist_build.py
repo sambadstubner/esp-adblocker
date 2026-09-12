@@ -10,11 +10,14 @@ Usage:
     python3 blocklist_build.py --source https://.../hosts --out-dir build/
 
 Output:
-    <out-dir>/bloom.bin    - header + bit array, for the firmware bloom filter
-    <out-dir>/domains.idx  - full sorted normalized domain list (one per
-                             line), for the SD card exact-match confirm step
+    <out-dir>/bloom.bin          - header + bit array, for the firmware bloom filter
+    <out-dir>/domains.idx        - full sorted normalized domain list (one per
+                                   line), for the SD card exact-match confirm step
+    <out-dir>/domains.idx.sha256 - hex SHA-256 of domains.idx, fetched separately
+                                   by blocklist_updater to verify its download
 """
 import argparse
+import hashlib
 import re
 import sys
 import time
@@ -119,8 +122,13 @@ def main():
     print(f"wrote {bloom_path} ({bloom_path.stat().st_size} bytes)", file=sys.stderr)
 
     idx_path = out_dir / "domains.idx"
-    idx_path.write_text("\n".join(domains) + "\n", encoding="ascii")
+    idx_bytes = ("\n".join(domains) + "\n").encode("ascii")
+    idx_path.write_bytes(idx_bytes)
     print(f"wrote {idx_path} ({idx_path.stat().st_size} bytes)", file=sys.stderr)
+
+    sha_path = out_dir / "domains.idx.sha256"
+    sha_path.write_text(hashlib.sha256(idx_bytes).hexdigest() + "\n", encoding="ascii")
+    print(f"wrote {sha_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

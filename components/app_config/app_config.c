@@ -135,3 +135,16 @@ esp_err_t app_config_set_fw_update_url(const char *url)
     ESP_RETURN_ON_ERROR(nvs_set_str(s_handle, "fw_url", url), TAG, "set fw_url failed");
     return nvs_commit(s_handle);
 }
+
+uint8_t app_config_get_exact_list_active_slot(void)
+{
+    uint8_t v = 0;
+    nvs_get_u8(s_handle, "list_slot", &v);
+    return v;
+}
+
+esp_err_t app_config_set_exact_list_active_slot(uint8_t slot)
+{
+    ESP_RETURN_ON_ERROR(nvs_set_u8(s_handle, "list_slot", slot), TAG, "set list_slot failed");
+    return nvs_commit(s_handle);
+}

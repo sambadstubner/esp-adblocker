@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "app_config.h"
+#include "blocklist_updater.h"
 #include "dns_proxy.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -21,6 +22,12 @@ static const char *TAG = "app_main";
 // Phase 7's web UI can trigger an update at runtime.
 #define FW_UPDATER_TRIGGER_TEST 0
 #define FW_UPDATER_TEST_URL "https://github.com/sambadstubner/esp-dns/releases/download/v0.1.0/esp-dns.bin"
+
+// Phase 6 (blocklist_updater) hardware verification scaffolding: same pattern.
+// blocklist/{bloom.bin,domains.idx,domains.idx.sha256} live at this path in
+// the repo, fetched via raw.githubusercontent.com.
+#define BLOCKLIST_UPDATER_TRIGGER_TEST 0
+#define BLOCKLIST_UPDATER_BASE_URL "https://raw.githubusercontent.com/sambadstubner/esp-dns/main/blocklist"
 
 // Phase 2 (app_config/NVS) hardware verification scaffolding: flip to 1, flash, confirm
 // the device comes up static at 192.168.1.50 with the overridden upstream/policy, then
@@ -129,4 +136,8 @@ void app_main(void)
             }
         }
     }
+
+#if BLOCKLIST_UPDATER_TRIGGER_TEST
+    blocklist_updater_check_and_apply_async(BLOCKLIST_UPDATER_BASE_URL);
+#endif
 }

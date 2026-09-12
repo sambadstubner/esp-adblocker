@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
+#include "app_config.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
@@ -93,11 +95,22 @@ esp_err_t sd_storage_load_domain_list(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const char *path = SD_STORAGE_MOUNT_POINT "/domains.idx";
+    uint8_t slot = app_config_get_exact_list_active_slot();
+    char path[64];
+    snprintf(path, sizeof(path), SD_STORAGE_MOUNT_POINT "/domains_%c.idx", slot == 0 ? 'a' : 'b');
+
     FILE *f = fopen(path, "rb");
     if (f == NULL) {
-        ESP_LOGW(TAG, "no domain list at %s", path);
-        return ESP_ERR_NOT_FOUND;
+        // Fall back to the pre-A/B filename so a card populated before
+        // blocklist_updater existed keeps working without manual migration.
+        const char *legacy_path = SD_STORAGE_MOUNT_POINT "/domains.idx";
+        f = fopen(legacy_path, "rb");
+        if (f == NULL) {
+            ESP_LOGW(TAG, "no domain list at %s (or legacy %s)", path, legacy_path);
+            return ESP_ERR_NOT_FOUND;
+        }
+        ESP_LOGW(TAG, "using legacy %s - next blocklist update will migrate to the A/B filenames", legacy_path);
+        snprintf(path, sizeof(path), "%s", legacy_path);
     }
 
     fseek(f, 0, SEEK_END);

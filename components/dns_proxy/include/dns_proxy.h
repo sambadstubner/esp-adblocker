@@ -15,6 +15,15 @@ extern "C" {
  */
 esp_err_t dns_proxy_start(void);
 
+/**
+ * (Re)loads the bloom filter from app_config's currently-active bloom_a/
+ * bloom_b flash slot, falling back to the embedded seed filter if that slot
+ * is empty or invalid. dns_proxy_start() calls this once at startup;
+ * blocklist_updater calls it again after activating a freshly-downloaded
+ * filter so the update takes effect without a reboot.
+ */
+void dns_proxy_reload_bloom_filter(void);
+
 #ifdef __cplusplus
 }
 #endif

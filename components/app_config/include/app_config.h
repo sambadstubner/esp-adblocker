@@ -49,9 +49,13 @@ esp_err_t app_config_set_block_policy(app_config_block_policy_t policy);
 esp_err_t app_config_get_blocklist_url(char *out_buf, size_t buf_len);
 esp_err_t app_config_set_blocklist_url(const char *url);
 
-/** Which of the two bloom.bin flash slots (0/1) is currently active. */
+/** Which of the two bloom.bin flash slots (0="bloom_a", 1="bloom_b") is currently active. */
 uint8_t app_config_get_bloom_active_slot(void);
 esp_err_t app_config_set_bloom_active_slot(uint8_t slot);
+
+/** Which of the two domains.idx SD files (0="domains_a.idx", 1="domains_b.idx") is currently active. */
+uint8_t app_config_get_exact_list_active_slot(void);
+esp_err_t app_config_set_exact_list_active_slot(uint8_t slot);
 
 /** out_buf must be at least 256 bytes. Empty string if never configured. */
 esp_err_t app_config_get_fw_update_url(char *out_buf, size_t buf_len);
