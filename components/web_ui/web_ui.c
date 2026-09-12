@@ -1,5 +1,6 @@
 #include "web_ui.h"
 
+#include <arpa/inet.h>
 #include <string.h>
 
 #include "app_config.h"
@@ -228,6 +229,61 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t allowlist_get_handler(httpd_req_t *req)
+{
+    char buf[APP_CONFIG_ALLOWLIST_MAX_LEN];
+    app_config_get_allowlist(buf, sizeof(buf));
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "allowlist", buf);
+    return send_json(req, root);
+}
+
+static esp_err_t allowlist_post_handler(httpd_req_t *req)
+{
+    char body[APP_CONFIG_ALLOWLIST_MAX_LEN];
+    if (!read_body(req, body, sizeof(body))) {
+        respond_error(req, "request body missing or too large");
+        return ESP_OK;
+    }
+
+    cJSON *json = cJSON_Parse(body);
+    const cJSON *item = json ? cJSON_GetObjectItem(json, "allowlist") : NULL;
+    if (!cJSON_IsString(item)) {
+        cJSON_Delete(json);
+        respond_error(req, "expected {\"allowlist\": \"domain-per-line string\"}");
+        return ESP_OK;
+    }
+
+    app_config_set_allowlist(item->valuestring);
+    cJSON_Delete(json);
+    dns_proxy_reload_allowlist();
+    respond_ok(req, false);
+    return ESP_OK;
+}
+
+static esp_err_t querylog_get_handler(httpd_req_t *req)
+{
+    dns_proxy_query_log_entry_t entries[CONFIG_DNS_PROXY_QUERY_LOG_SIZE];
+    size_t count = dns_proxy_get_query_log(entries, CONFIG_DNS_PROXY_QUERY_LOG_SIZE);
+    int64_t now = esp_timer_get_time();
+
+    cJSON *arr = cJSON_CreateArray();
+    for (size_t i = 0; i < count; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "qname", entries[i].qname);
+        cJSON_AddNumberToObject(e, "qtype", entries[i].qtype);
+        cJSON_AddNumberToObject(e, "result", entries[i].result);
+        cJSON_AddNumberToObject(e, "seconds_ago", (double)((now - entries[i].time_us) / 1000000));
+        struct in_addr client = { .s_addr = entries[i].client_ip };
+        cJSON_AddStringToObject(e, "client_ip", inet_ntoa(client));
+        cJSON_AddItemToArray(arr, e);
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "entries", arr);
+    return send_json(req, root);
+}
+
 static esp_err_t update_blocklist_post_handler(httpd_req_t *req)
 {
     char url[MAX_URL_FIELD_LEN];
@@ -272,6 +328,8 @@ esp_err_t web_ui_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.stack_size = 6144; // the allowlist/querylog handlers use larger on-stack buffers than the default 4096 comfortably allows
+    config.max_uri_handlers = 12; // default of 8 is too small now that allowlist/querylog routes exist
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &config);
@@ -285,6 +343,9 @@ esp_err_t web_ui_start(void)
         { .uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler },
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler },
+        { .uri = "/api/allowlist", .method = HTTP_GET, .handler = allowlist_get_handler },
+        { .uri = "/api/allowlist", .method = HTTP_POST, .handler = allowlist_post_handler },
+        { .uri = "/api/querylog", .method = HTTP_GET, .handler = querylog_get_handler },
         { .uri = "/api/update/blocklist", .method = HTTP_POST, .handler = update_blocklist_post_handler },
         { .uri = "/api/update/firmware", .method = HTTP_POST, .handler = update_firmware_post_handler },
         { .uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler },

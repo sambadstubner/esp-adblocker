@@ -1,6 +1,7 @@
 #include "dns_proxy.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -14,10 +15,14 @@
 #include "esp_partition.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sd_storage.h"
 
 static const char *TAG = "dns_proxy";
+
+_Static_assert(DNS_PROXY_QUERY_LOG_NAME_LEN == DNS_WIRE_MAX_NAME_LEN,
+               "query log qname buffer should match dns_wire's - keep these in sync");
 
 // Embedded fallback seed filter (see blocklist/bloom.bin), used only when the
 // active bloom_a/bloom_b flash partition is empty or fails to parse - e.g. a
@@ -46,6 +51,20 @@ static int s_upstream_sock = -1;
 static uint8_t s_upstream_index = 0; // 0 -> upstream1, 1 -> upstream2
 static int s_consecutive_timeouts = 0;
 static dns_proxy_stats_t s_stats;
+
+// User-managed allowlist (see app_config_get/set_allowlist). Small and rarely
+// checked (only on a bloom-positive), so a plain linear scan is plenty fast -
+// no need for the sorted-array/bsearch treatment sd_storage uses for the
+// much larger exact block list.
+static char *s_allowlist_buf = NULL;
+static char **s_allowlist_entries = NULL;
+static size_t s_allowlist_count = 0;
+
+// Recent-query ring buffer for the web UI's query log.
+static dns_proxy_query_log_entry_t s_query_log[CONFIG_DNS_PROXY_QUERY_LOG_SIZE];
+static size_t s_query_log_next = 0;  // index the *next* logged entry will occupy
+static size_t s_query_log_count = 0; // valid entries so far, caps at array size
+static SemaphoreHandle_t s_query_log_mutex = NULL;
 
 static uint32_t current_upstream_ip(void)
 {
@@ -167,6 +186,110 @@ void dns_proxy_reload_bloom_filter(void)
     }
 }
 
+void dns_proxy_reload_allowlist(void)
+{
+    if (s_allowlist_buf != NULL) {
+        free(s_allowlist_buf);
+        s_allowlist_buf = NULL;
+    }
+    if (s_allowlist_entries != NULL) {
+        free(s_allowlist_entries);
+        s_allowlist_entries = NULL;
+    }
+    s_allowlist_count = 0;
+
+    char *buf = malloc(APP_CONFIG_ALLOWLIST_MAX_LEN);
+    if (buf == NULL) {
+        ESP_LOGE(TAG, "no memory for allowlist buffer");
+        return;
+    }
+    if (app_config_get_allowlist(buf, APP_CONFIG_ALLOWLIST_MAX_LEN) != ESP_OK || buf[0] == '\0') {
+        free(buf);
+        return; // no allowlist configured - not an error
+    }
+
+    size_t line_count = 1;
+    for (const char *p = buf; *p != '\0'; p++) {
+        if (*p == '\n') {
+            line_count++;
+        }
+    }
+
+    char **entries = malloc(line_count * sizeof(char *));
+    if (entries == NULL) {
+        ESP_LOGE(TAG, "no memory for allowlist entries");
+        free(buf);
+        return;
+    }
+
+    size_t count = 0;
+    char *line_start = buf;
+    for (char *p = buf;; p++) {
+        if (*p == '\n' || *p == '\0') {
+            bool at_end = (*p == '\0');
+            *p = '\0';
+            if (line_start[0] != '\0') {
+                entries[count++] = line_start;
+            }
+            line_start = p + 1;
+            if (at_end) {
+                break;
+            }
+        }
+    }
+
+    s_allowlist_buf = buf;
+    s_allowlist_entries = entries;
+    s_allowlist_count = count;
+    ESP_LOGI(TAG, "allowlist loaded: %zu domain(s)", count);
+}
+
+static bool is_allowlisted(const char *qname)
+{
+    for (size_t i = 0; i < s_allowlist_count; i++) {
+        if (strcmp(qname, s_allowlist_entries[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void log_query(uint32_t client_ip, const char *qname, uint16_t qtype, dns_proxy_query_result_t result)
+{
+    if (s_query_log_mutex == NULL || xSemaphoreTake(s_query_log_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return; // diagnostic-only feature - never worth blocking the hot path over
+    }
+    dns_proxy_query_log_entry_t *e = &s_query_log[s_query_log_next];
+    e->time_us = esp_timer_get_time();
+    e->client_ip = client_ip;
+    e->qtype = qtype;
+    e->result = result;
+    strncpy(e->qname, qname, sizeof(e->qname) - 1);
+    e->qname[sizeof(e->qname) - 1] = '\0';
+
+    s_query_log_next = (s_query_log_next + 1) % CONFIG_DNS_PROXY_QUERY_LOG_SIZE;
+    if (s_query_log_count < CONFIG_DNS_PROXY_QUERY_LOG_SIZE) {
+        s_query_log_count++;
+    }
+    xSemaphoreGive(s_query_log_mutex);
+}
+
+size_t dns_proxy_get_query_log(dns_proxy_query_log_entry_t *out, size_t max_entries)
+{
+    if (s_query_log_mutex == NULL || xSemaphoreTake(s_query_log_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return 0;
+    }
+    size_t count = s_query_log_count < max_entries ? s_query_log_count : max_entries;
+    for (size_t i = 0; i < count; i++) {
+        // s_query_log_next is the slot the *next* write will use, so the most
+        // recently written entry is one behind it; walk backward from there.
+        size_t idx = (s_query_log_next + CONFIG_DNS_PROXY_QUERY_LOG_SIZE - 1 - i) % CONFIG_DNS_PROXY_QUERY_LOG_SIZE;
+        out[i] = s_query_log[idx];
+    }
+    xSemaphoreGive(s_query_log_mutex);
+    return count;
+}
+
 /**
  * Returns true if the query was blocked (and a response was already sent to
  * the client) - caller must not forward the query upstream in that case.
@@ -175,6 +298,11 @@ static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_
                        const dns_wire_question_t *q)
 {
     if (!app_config_get_blocking_enabled() || !s_bloom_ready || !bloom_filter_test(&s_bloom, q->qname)) {
+        return false;
+    }
+
+    if (is_allowlisted(q->qname)) {
+        ESP_LOGD(TAG, "allowlisted, overriding block: %s", q->qname);
         return false;
     }
 
@@ -189,7 +317,7 @@ static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_
 
     size_t resp_len = n;
     if (app_config_get_block_policy() == APP_CONFIG_BLOCK_ZERO_IP) {
-        size_t new_len = dns_wire_make_zero_answer(buf, n, DNS_WIRE_MAX_MSG_LEN, q->qtype);
+        size_t new_len = dns_wire_make_zero_answer(buf, q->question_end, DNS_WIRE_MAX_MSG_LEN, q->qtype);
         if (new_len > 0) {
             resp_len = new_len;
         } else {
@@ -220,6 +348,7 @@ static void handle_client_datagram(void)
         ESP_LOGD(TAG, "query from %s: %s type=%u", inet_ntoa(client_addr.sin_addr), q.qname, q.qtype);
         if (try_block(&client_addr, buf, (size_t)n, &q)) {
             s_stats.queries_blocked++;
+            log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_BLOCKED);
             return; // blocked - do not forward upstream
         }
     }
@@ -231,6 +360,9 @@ static void handle_client_datagram(void)
         ESP_LOGW(TAG, "pending table full, replying SERVFAIL immediately");
         send_error_to_client(&client_addr, buf, (size_t)n, DNS_RCODE_SERVFAIL);
         s_stats.queries_servfail++;
+        if (have_question) {
+            log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
+        }
         return;
     }
 
@@ -249,6 +381,9 @@ static void handle_client_datagram(void)
     }
     p->in_use = true;
     s_stats.queries_forwarded++;
+    if (have_question) {
+        log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_FORWARDED);
+    }
 }
 
 static void handle_upstream_datagram(void)
@@ -282,6 +417,10 @@ static void sweep_timeouts(void)
         ESP_LOGW(TAG, "upstream timeout for txid=%u", p->client_txid);
         dns_wire_set_txid(p->query_buf, p->query_len, p->client_txid);
         send_error_to_client(&p->client_addr, p->query_buf, p->query_len, DNS_RCODE_SERVFAIL);
+        dns_wire_question_t q;
+        if (dns_wire_parse_question(p->query_buf, p->query_len, &q)) {
+            log_query(p->client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
+        }
         p->in_use = false;
         s_stats.queries_servfail++;
         s_consecutive_timeouts++;
@@ -345,7 +484,11 @@ esp_err_t dns_proxy_start(void)
     memset(&s_stats, 0, sizeof(s_stats));
     s_stats.start_time_us = esp_timer_get_time();
 
+    s_query_log_mutex = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(s_query_log_mutex != NULL, ESP_ERR_NO_MEM, TAG, "query log mutex create failed");
+
     dns_proxy_reload_bloom_filter();
+    dns_proxy_reload_allowlist();
 
     struct sockaddr_in listen_addr = {
         .sin_family = AF_INET,

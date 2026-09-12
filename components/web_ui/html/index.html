@@ -59,6 +59,20 @@
   .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
   .url-row { display: flex; gap: 8px; align-items: flex-start; }
   .url-row input { flex: 1; }
+  textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font-size: 13px; font-family: ui-monospace, monospace;
+    resize: vertical; min-height: 90px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.qname { word-break: break-all; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.forwarded { background: rgba(26,135,84,0.15); color: var(--ok); }
+  .pill.blocked { background: rgba(209,69,59,0.15); color: var(--danger); }
+  .pill.servfail { background: rgba(184,134,11,0.15); color: var(--warn); }
+  .table-wrap { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -150,6 +164,28 @@
       <button onclick="saveUrl('fw_update_url', 'fw-url', 'fw-msg')">Update</button>
     </div>
     <div class="msg" id="fw-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Allowlist</h2>
+    <div class="hint" style="margin-bottom:8px">Domains here are always let through, even if the blocklist would otherwise block them. One domain per line.</div>
+    <textarea id="allowlist" placeholder="example.com&#10;cdn.example.net"></textarea>
+    <div class="actions" style="margin-top:10px">
+      <button class="primary" onclick="saveAllowlist()">Save allowlist</button>
+    </div>
+    <div class="msg" id="allowlist-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent queries</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Age</th><th>Client</th><th>Domain</th><th>Type</th><th>Result</th></tr>
+        </thead>
+        <tbody id="querylog-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
@@ -279,9 +315,45 @@ async function triggerAction(path, confirmText, msgId) {
   showMsg(msgId, res.ok ? 'Started.' : (res.error || 'Failed.'), res.ok);
 }
 
+async function loadAllowlist() {
+  const r = await fetch('/api/allowlist');
+  const a = await r.json();
+  document.getElementById('allowlist').value = a.allowlist || '';
+}
+
+async function saveAllowlist() {
+  const value = document.getElementById('allowlist').value;
+  const r = await fetch('/api/allowlist', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ allowlist: value }) });
+  const res = await r.json();
+  showMsg('allowlist-msg', res.ok ? 'Saved.' : (res.error || 'Failed to save.'), res.ok);
+}
+
+const QTYPE_NAMES = { 1: 'A', 28: 'AAAA', 5: 'CNAME', 15: 'MX', 16: 'TXT', 2: 'NS', 12: 'PTR', 33: 'SRV' };
+const RESULT_INFO = { 0: ['forwarded', 'forwarded'], 1: ['blocked', 'blocked'], 2: ['servfail', 'SERVFAIL'] };
+
+function fmtAge(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  return Math.floor(s / 3600) + 'h';
+}
+
+async function loadQueryLog() {
+  const r = await fetch('/api/querylog');
+  const j = await r.json();
+  const body = document.getElementById('querylog-body');
+  body.innerHTML = j.entries.map(e => {
+    const [cls, label] = RESULT_INFO[e.result] || ['servfail', '?'];
+    return `<tr><td>${fmtAge(e.seconds_ago)}</td><td>${e.client_ip}</td><td class="qname">${e.qname}</td>` +
+      `<td>${QTYPE_NAMES[e.qtype] || e.qtype}</td><td><span class="pill ${cls}">${label}</span></td></tr>`;
+  }).join('');
+}
+
 loadStatus();
 loadConfig();
+loadAllowlist();
+loadQueryLog();
 setInterval(loadStatus, 5000);
+setInterval(loadQueryLog, 5000);
 </script>
 </body>
 </html>

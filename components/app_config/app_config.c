@@ -174,3 +174,19 @@ esp_err_t app_config_set_exact_list_active_slot(uint8_t slot)
     ESP_RETURN_ON_ERROR(nvs_set_u8(s_handle, "list_slot", slot), TAG, "set list_slot failed");
     return nvs_commit(s_handle);
 }
+
+esp_err_t app_config_get_allowlist(char *out_buf, size_t buf_len)
+{
+    esp_err_t err = nvs_get_str(s_handle, "allowlist", out_buf, &buf_len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        out_buf[0] = '\0';
+        return ESP_OK;
+    }
+    return err;
+}
+
+esp_err_t app_config_set_allowlist(const char *newline_separated_domains)
+{
+    ESP_RETURN_ON_ERROR(nvs_set_str(s_handle, "allowlist", newline_separated_domains), TAG, "set allowlist failed");
+    return nvs_commit(s_handle);
+}

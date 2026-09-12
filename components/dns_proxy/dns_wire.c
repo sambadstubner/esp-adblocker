@@ -71,6 +71,8 @@ bool dns_wire_parse_question(const uint8_t *buf, size_t len, dns_wire_question_t
     out->qtype = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
     pos += 2;
     out->qclass = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    out->question_end = pos;
     out->txid = dns_wire_get_txid(buf, len);
 
     return true;
@@ -88,7 +90,7 @@ void dns_wire_make_error_response(uint8_t *buf, size_t len, uint8_t rcode)
     buf[3] = (uint8_t)(0x80 | (rcode & 0x0F));
 }
 
-size_t dns_wire_make_zero_answer(uint8_t *buf, size_t query_len, size_t buf_cap, uint16_t qtype)
+size_t dns_wire_make_zero_answer(uint8_t *buf, size_t question_end, size_t buf_cap, uint16_t qtype)
 {
     size_t rdlength;
     if (qtype == DNS_TYPE_A) {
@@ -100,11 +102,14 @@ size_t dns_wire_make_zero_answer(uint8_t *buf, size_t query_len, size_t buf_cap,
     }
 
     size_t answer_len = 2 /* name ptr */ + 2 /* type */ + 2 /* class */ + 4 /* ttl */ + 2 /* rdlength */ + rdlength;
-    if (query_len + answer_len > buf_cap) {
+    if (question_end + answer_len > buf_cap) {
         return 0;
     }
 
-    size_t pos = query_len;
+    // Truncate to Header+Question, dropping any OPT/other records that
+    // followed it in the original query - otherwise the answer we're about
+    // to append would land after Additional instead of before it.
+    size_t pos = question_end;
     buf[pos++] = 0xC0;
     buf[pos++] = 0x0C; // compression pointer to offset 12: the question's QNAME
     buf[pos++] = (uint8_t)(qtype >> 8);
@@ -124,6 +129,10 @@ size_t dns_wire_make_zero_answer(uint8_t *buf, size_t query_len, size_t buf_cap,
     buf[3] = 0x80;                               // RA=1, RCODE=NOERROR
     buf[6] = 0x00;
     buf[7] = 0x01; // ANCOUNT = 1
+    buf[8] = 0x00;
+    buf[9] = 0x00; // NSCOUNT = 0
+    buf[10] = 0x00;
+    buf[11] = 0x00; // ARCOUNT = 0 - any OPT from the query was dropped above
 
     return pos;
 }

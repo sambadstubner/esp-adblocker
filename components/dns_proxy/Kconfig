@@ -30,4 +30,11 @@ menu "DNS Proxy Configuration"
         int "Proxy task priority"
         default 5
 
+    config DNS_PROXY_QUERY_LOG_SIZE
+        int "Recent-query ring buffer size"
+        default 100
+        help
+            Number of most-recent queries kept in RAM for the web UI's query
+            log (~260 bytes/entry). Not persisted across reboots.
+
 endmenu

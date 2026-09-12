@@ -71,6 +71,22 @@ esp_err_t app_config_set_exact_list_active_slot(uint8_t slot);
 esp_err_t app_config_get_fw_update_url(char *out_buf, size_t buf_len);
 esp_err_t app_config_set_fw_update_url(const char *url);
 
+/**
+ * User-managed override list: domains here are always let through, even if
+ * the bloom filter/exact list would otherwise block them. Checked before
+ * both, so it wins over a bad blocklist entry or a bloom false-positive
+ * without needing to disable blocking network-wide.
+ *
+ * Stored as one domain per line (newline-separated), normalized (lowercase,
+ * no trailing dot) the same way the blocklist tooling normalizes entries.
+ * out_buf must be at least 2048 bytes (NVS caps string values at 4000 bytes
+ * total; 2048 comfortably fits dozens of domains with room to spare).
+ * Empty string if never configured.
+ */
+#define APP_CONFIG_ALLOWLIST_MAX_LEN 2048
+esp_err_t app_config_get_allowlist(char *out_buf, size_t buf_len);
+esp_err_t app_config_set_allowlist(const char *newline_separated_domains);
+
 #ifdef __cplusplus
 }
 #endif

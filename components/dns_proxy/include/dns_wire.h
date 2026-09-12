@@ -29,6 +29,7 @@ typedef struct {
     uint16_t txid;
     uint16_t qtype;
     uint16_t qclass;
+    size_t question_end; // byte offset just past QCLASS - end of Header+Question, before any OPT/other records
     char qname[DNS_WIRE_MAX_NAME_LEN]; // dotted, lowercased, NUL-terminated
 } dns_wire_question_t;
 
@@ -56,15 +57,20 @@ bool dns_wire_parse_question(const uint8_t *buf, size_t len, dns_wire_question_t
 void dns_wire_make_error_response(uint8_t *buf, size_t len, uint8_t rcode);
 
 /**
- * Appends a single "zero address" answer record (0.0.0.0 for an A query, ::
- * for AAAA) to a query message already sitting in buf[0..query_len), reusing
- * the question via a standard name-compression pointer, and flips the header
- * into a NOERROR response with ANCOUNT=1. Returns the new total message
- * length, or 0 if qtype is something other than A/AAAA (nothing sensible to
- * zero-answer) or buf_cap is too small - callers should fall back to
- * dns_wire_make_error_response() with DNS_RCODE_NXDOMAIN in that case.
+ * Turns a query message into a minimal "zero address" answer response
+ * (0.0.0.0 for an A query, :: for AAAA), in place: truncates the message to
+ * Header+Question (dropping any OPT/other records that followed the question
+ * - e.g. an EDNS0 pseudo-record - since leaving them in place after inserting
+ * an answer would put the Answer section after Additional, an invalid wire
+ * layout), appends the answer via a standard name-compression pointer back to
+ * the question, and flips the header into a NOERROR response with ANCOUNT=1,
+ * NSCOUNT=0, ARCOUNT=0. question_end (from dns_wire_parse_question) is the
+ * offset to truncate to. Returns the new total message length, or 0 if qtype
+ * is something other than A/AAAA (nothing sensible to zero-answer) or buf_cap
+ * is too small - callers should fall back to dns_wire_make_error_response()
+ * with DNS_RCODE_NXDOMAIN in that case.
  */
-size_t dns_wire_make_zero_answer(uint8_t *buf, size_t query_len, size_t buf_cap, uint16_t qtype);
+size_t dns_wire_make_zero_answer(uint8_t *buf, size_t question_end, size_t buf_cap, uint16_t qtype);
 
 #ifdef __cplusplus
 }

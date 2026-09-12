@@ -58,6 +58,39 @@ void dns_proxy_get_bloom_info(dns_proxy_bloom_info_t *out);
  */
 void dns_proxy_apply_upstream_config(void);
 
+/**
+ * (Re)loads the user-managed allowlist from app_config. dns_proxy_start()
+ * calls this once at startup; the web UI calls it again after the user edits
+ * the allowlist so the change takes effect immediately, no reboot needed.
+ * A domain on this list is always let through, checked before both the
+ * bloom filter's positive result and the SD exact-list confirm - it wins
+ * over a bad blocklist entry or a bloom false-positive.
+ */
+void dns_proxy_reload_allowlist(void);
+
+typedef enum {
+    DNS_PROXY_RESULT_FORWARDED = 0,
+    DNS_PROXY_RESULT_BLOCKED = 1,
+    DNS_PROXY_RESULT_SERVFAIL = 2,
+} dns_proxy_query_result_t;
+
+#define DNS_PROXY_QUERY_LOG_NAME_LEN 255
+
+typedef struct {
+    int64_t time_us;      // esp_timer_get_time() when logged
+    uint32_t client_ip;   // wire-order IPv4, same representation as sockaddr_in.sin_addr.s_addr
+    uint16_t qtype;
+    dns_proxy_query_result_t result;
+    char qname[DNS_PROXY_QUERY_LOG_NAME_LEN];
+} dns_proxy_query_log_entry_t;
+
+/**
+ * Copies up to max_entries of the most recent queries (newest first) into
+ * out. Returns the number actually copied. Backed by a fixed-size ring
+ * buffer (CONFIG_DNS_PROXY_QUERY_LOG_SIZE entries) in internal RAM.
+ */
+size_t dns_proxy_get_query_log(dns_proxy_query_log_entry_t *out, size_t max_entries);
+
 #ifdef __cplusplus
 }
 #endif

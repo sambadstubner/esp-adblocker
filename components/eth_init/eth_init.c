@@ -48,6 +48,41 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+// Some networks' DHCP servers don't hand out a DNS server (e.g. ones that
+// expect clients to discover it via IPv6 RA/RDNSS instead, which this project
+// doesn't implement) - without this, the device would have no way to resolve
+// hostnames for its own outbound HTTPS/NTP lookups (blocklist updates,
+// firmware OTA, SNTP), even though DNS serving for other clients works fine
+// via the dns_proxy component's own upstream config. Called after IP
+// assignment (DHCP lease or static) so a real DHCP-provided DNS server, if
+// any, is already in place and not overwritten - this only fills genuine gaps.
+static void apply_dns_fallback_if_unset(void)
+{
+    struct {
+        esp_netif_dns_type_t slot;
+        uint32_t upstream;
+    } fallbacks[] = {
+        { ESP_NETIF_DNS_MAIN, app_config_get_upstream1() },
+        { ESP_NETIF_DNS_BACKUP, app_config_get_upstream2() },
+    };
+    for (size_t i = 0; i < sizeof(fallbacks) / sizeof(fallbacks[0]); i++) {
+        esp_netif_dns_info_t info;
+        if (esp_netif_get_dns_info(s_eth_netif, fallbacks[i].slot, &info) == ESP_OK &&
+            info.ip.u_addr.ip4.addr != 0) {
+            continue; // DHCP already gave us one for this slot
+        }
+        info.ip.type = ESP_IPADDR_TYPE_V4;
+        info.ip.u_addr.ip4.addr = fallbacks[i].upstream;
+        esp_err_t err = esp_netif_set_dns_info(s_eth_netif, fallbacks[i].slot, &info);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "no DNS server from network for slot %d, using fallback " IPSTR,
+                     fallbacks[i].slot, IP2STR(&info.ip.u_addr.ip4));
+        } else {
+            ESP_LOGW(TAG, "failed to set fallback DNS for slot %d: %s", fallbacks[i].slot, esp_err_to_name(err));
+        }
+    }
+}
+
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                   int32_t event_id, void *event_data)
 {
@@ -56,6 +91,7 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
 
     ESP_LOGI(TAG, "got IP:" IPSTR " mask:" IPSTR " gw:" IPSTR,
              IP2STR(&ip_info->ip), IP2STR(&ip_info->netmask), IP2STR(&ip_info->gw));
+    apply_dns_fallback_if_unset();
     if (s_event_group != NULL) {
         xEventGroupSetBits(s_event_group, ETH_INIT_GOT_IP_BIT);
     }
@@ -115,6 +151,10 @@ esp_err_t eth_init_start(void)
 
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
     s_eth_netif = esp_netif_new(&netif_config);
+    // Sets the hostname DHCP option (12) sent in lease requests, so the
+    // router's client list shows "esp-dns" instead of a MAC address. Must be
+    // set before esp_eth_start() below brings the DHCP client up.
+    ESP_RETURN_ON_ERROR(esp_netif_set_hostname(s_eth_netif, MDNS_HOSTNAME), TAG, "set hostname failed");
     esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);
     ESP_RETURN_ON_ERROR(esp_netif_attach(s_eth_netif, glue), TAG, "netif attach failed");
 
@@ -130,7 +170,9 @@ esp_err_t eth_init_start(void)
             ESP_RETURN_ON_ERROR(esp_netif_set_ip_info(s_eth_netif, &ip_info), TAG, "set static IP failed");
             ESP_LOGI(TAG, "using static IP:" IPSTR, IP2STR(&ip_info.ip));
             // Static assignment doesn't go through the DHCP client, so no
-            // IP_EVENT_ETH_GOT_IP will fire for it - signal readiness here instead.
+            // IP_EVENT_ETH_GOT_IP will fire for it - signal readiness and set
+            // the DNS fallback here instead.
+            apply_dns_fallback_if_unset();
             xEventGroupSetBits(s_event_group, ETH_INIT_GOT_IP_BIT);
         } else {
             ESP_LOGW(TAG, "net_mode is STATIC but no static IP is configured; falling back to DHCP");
