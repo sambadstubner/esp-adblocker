@@ -263,7 +263,17 @@ static esp_err_t allowlist_post_handler(httpd_req_t *req)
 
 static esp_err_t querylog_get_handler(httpd_req_t *req)
 {
-    dns_proxy_query_log_entry_t entries[CONFIG_DNS_PROXY_QUERY_LOG_SIZE];
+    // CONFIG_DNS_PROXY_QUERY_LOG_SIZE entries (280 bytes each, ~28KB at the
+    // default of 100) would badly overflow the httpd task's 6KB stack as a
+    // local array - heap-allocate instead, from PSRAM since it's plentiful
+    // and this is a large, short-lived, non-performance-critical buffer.
+    dns_proxy_query_log_entry_t *entries = heap_caps_malloc(
+        CONFIG_DNS_PROXY_QUERY_LOG_SIZE * sizeof(dns_proxy_query_log_entry_t), MALLOC_CAP_SPIRAM);
+    if (entries == NULL) {
+        respond_error(req, "out of memory");
+        return ESP_OK;
+    }
+
     size_t count = dns_proxy_get_query_log(entries, CONFIG_DNS_PROXY_QUERY_LOG_SIZE);
     int64_t now = esp_timer_get_time();
 
@@ -278,6 +288,7 @@ static esp_err_t querylog_get_handler(httpd_req_t *req)
         cJSON_AddStringToObject(e, "client_ip", inet_ntoa(client));
         cJSON_AddItemToArray(arr, e);
     }
+    heap_caps_free(entries);
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddItemToObject(root, "entries", arr);
