@@ -1,0 +1,10 @@
+# Name,     Type, SubType,  Offset,    Size,      Flags
+# Two-OTA-slot layout (no factory slot - every flash after the first goes
+# through the normal OTA rollback path). 16MB flash total; 1.5MB per app slot
+# leaves ample room to grow (current binary is ~520KB) plus headroom for
+# Phase 6's bloom_a/bloom_b data partitions still to be added.
+nvs,        data, nvs,      0x9000,    0x6000,
+otadata,    data, ota,      0xf000,    0x2000,
+phy_init,   data, phy,      0x11000,   0x1000,
+ota_0,      app,  ota_0,    0x20000,   0x180000,
+ota_1,      app,  ota_1,    0x1A0000,  0x180000,

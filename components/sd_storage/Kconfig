@@ -1,0 +1,46 @@
+menu "SD Card (TF slot) Configuration"
+
+    config SD_STORAGE_SPI_HOST
+        int "SPI host for TF/SD card"
+        default 2
+        help
+            SPI peripheral used for the onboard TF card slot. Must differ from
+            ETH_INIT_SPI_HOST so Ethernet and the SD card can run concurrently
+            on independent buses.
+            0 = SPI1_HOST (reserved for flash, do not use)
+            1 = SPI2_HOST
+            2 = SPI3_HOST
+
+    config SD_STORAGE_MISO_GPIO
+        int "TF card MISO (DO) GPIO"
+        default 5
+        help
+            Confirmed pinout for the Waveshare ESP32-S3-ETH onboard TF card slot.
+
+    config SD_STORAGE_MOSI_GPIO
+        int "TF card MOSI (DI) GPIO"
+        default 6
+
+    config SD_STORAGE_SCLK_GPIO
+        int "TF card SCLK GPIO"
+        default 7
+
+    config SD_STORAGE_CS_GPIO
+        int "TF card CS GPIO"
+        default 4
+
+    config SD_STORAGE_FORMAT_IF_MOUNT_FAILED
+        bool "Format card as FAT32 if mount fails"
+        default y
+        help
+            If the card can't be mounted as-is (e.g. it still has a foreign/Linux
+            partition table from prior use), wipe it and lay down a fresh FAT32
+            volume instead of failing. Safe to leave on for this appliance since
+            the card only ever holds the derived block-list index, never
+            irreplaceable data.
+
+    config SD_STORAGE_MAX_FILES
+        int "Max simultaneously open files"
+        default 4
+
+endmenu

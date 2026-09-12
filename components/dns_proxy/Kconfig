@@ -1,0 +1,33 @@
+menu "DNS Proxy Configuration"
+
+    config DNS_PROXY_PORT
+        int "DNS listen port"
+        default 53
+
+    config DNS_PROXY_MAX_PENDING
+        int "Max concurrent in-flight upstream queries"
+        default 32
+        help
+            Fixed-size pending-query table. A new client query when the table
+            is full gets an immediate SERVFAIL rather than being queued.
+
+    config DNS_PROXY_UPSTREAM_TIMEOUT_MS
+        int "Upstream response timeout (ms)"
+        default 3000
+        help
+            If no upstream reply arrives within this window, the client gets
+            a synthesized SERVFAIL and the slot is freed.
+
+    config DNS_PROXY_UPSTREAM_FAIL_THRESHOLD
+        int "Consecutive timeouts before failing over to the other upstream"
+        default 5
+
+    config DNS_PROXY_TASK_STACK
+        int "Proxy task stack size (bytes)"
+        default 4096
+
+    config DNS_PROXY_TASK_PRIORITY
+        int "Proxy task priority"
+        default 5
+
+endmenu

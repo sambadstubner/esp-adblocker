@@ -1,0 +1,24 @@
+# Target: Waveshare ESP32-S3-ETH (ESP32-S3R8: octal PSRAM, 16MB flash)
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# Onboard Ethernet: W5500 over SPI (see components/eth_init/Kconfig for pin config)
+CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# FatFs defaults to 8.3 short filenames only; the blocklist_updater's A/B files
+# (domains_a.idx, domains_b.idx, etc.) need long filename support.
+CONFIG_FATFS_LFN_HEAP=y
+
+# Two-OTA-slot partition table (see partitions.csv) + app rollback: a freshly
+# OTA'd image must explicitly confirm itself healthy (fw_updater component)
+# or the bootloader auto-reverts to the previous slot on next boot.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
