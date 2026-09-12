@@ -14,8 +14,8 @@ extern "C" {
 
 #define DNS_WIRE_HEADER_LEN 12
 #define DNS_WIRE_MAX_NAME_LEN 255
-// Classic DNS-over-UDP message size limit. No EDNS0 support in v1 (see PLAN.md
-// scope notes) - messages larger than this are rejected rather than mishandled.
+// Classic DNS-over-UDP message size limit. No EDNS0 support - messages
+// larger than this are rejected rather than mishandled.
 #define DNS_WIRE_MAX_MSG_LEN 512
 
 #define DNS_RCODE_NOERROR 0

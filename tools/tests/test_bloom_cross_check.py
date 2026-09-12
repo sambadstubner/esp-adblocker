@@ -4,7 +4,7 @@ Cross-check that the firmware's bloom filter (components/bloom_filter/*.c,
 compiled here as a real shared library and called via ctypes) and the host
 tooling's Python implementation (tools/bloom_format.py) agree bit-for-bit.
 
-This is the single highest-risk piece of the whole project per PLAN.md: a
+This is the single highest-risk piece of the whole project: a
 silent mismatch here doesn't crash anything, it just silently degrades
 blocking (or, if the two sides drift far enough, could in principle also
 falsely clear a bit a domain needs - which is exactly why we check every

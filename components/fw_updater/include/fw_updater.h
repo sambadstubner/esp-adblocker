@@ -8,11 +8,12 @@ extern "C" {
 
 /**
  * Downloads and flashes a firmware image from `url` over HTTPS (trusted via
- * the built-in Mozilla CA bundle - no custom signing, per PLAN.md's OTA
- * security decision), following redirects (so GitHub Release asset URLs,
- * which redirect to objects.githubusercontent.com, work). On success this
- * reboots into the new image and never returns; on failure it returns the
- * error and the device keeps running the current image untouched.
+ * the built-in Mozilla CA bundle - no custom signing; TLS trust is
+ * considered sufficient for this project), following redirects (so GitHub
+ * Release asset URLs, which redirect to objects.githubusercontent.com,
+ * work). On success this reboots into the new image and never returns; on
+ * failure it returns the error and the device keeps running the current
+ * image untouched.
  */
 esp_err_t fw_updater_check_and_update(const char *url);
 

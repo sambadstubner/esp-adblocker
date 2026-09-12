@@ -185,7 +185,7 @@ static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_
     }
     // confirm is BLOCKED (genuinely in the list) or UNAVAILABLE (SD absent/
     // unmounted) - fail safe in the UNAVAILABLE case by blocking on the
-    // bloom result alone, per PLAN.md's Phase 4 fail-safe design.
+    // bloom result alone rather than silently letting the query through.
 
     size_t resp_len = n;
     if (app_config_get_block_policy() == APP_CONFIG_BLOCK_ZERO_IP) {

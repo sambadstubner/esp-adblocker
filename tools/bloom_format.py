@@ -81,7 +81,8 @@ def optimal_size(n_domains: int, target_fp_rate: float):
 #   uint32_t hash_seed;     reserved for future seed rotation; 0 = seeds above
 #   uint64_t build_unix_ts;
 #   uint32_t crc32;         CRC32 of the bit array that follows (corruption
-#                           check only, not a security control - see PLAN.md)
+#                           check only, not a security control - TLS is the
+#                           trust boundary for this artifact)
 HEADER_FORMAT = "<IHHQIQIQI"
 HEADER_MAGIC = 0x4D4F4C42
 HEADER_VERSION = 1
