@@ -76,9 +76,13 @@ etched onto the board. Just insert a microSD card and connect Ethernet.
    whole network (via your router's DHCP/DNS settings - see your router's
    documentation, and give the device a fixed IP or DHCP reservation first),
    or set it as the manual DNS server on individual devices you want to
-   scope this to. Note that IPv6-capable networks may hand out a separate
-   IPv6 DNS server that bypasses this device unless you also disable IPv6 on
-   the client or on your router.
+   scope this to. The device answers over both IPv4 and IPv6 (check the
+   status page for its IPv6 addresses), but on most home routers you can't
+   tell the router to *advertise* that IPv6 address to clients the way you
+   can for IPv4 via DHCP - if your network has IPv6 enabled, clients will
+   likely keep using the router's own advertised IPv6 DNS server unless you
+   manually set a device's DNS server to this one, or disable IPv6 client-side
+   or router-side.
 
 ### Web UI reference
 

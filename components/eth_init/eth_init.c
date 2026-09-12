@@ -33,6 +33,14 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
         ESP_LOGI(TAG, "link up, MAC %02x:%02x:%02x:%02x:%02x:%02x",
                  mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+        // Unlike IPv4/DHCP, esp-netif doesn't create an IPv6 link-local address
+        // on its own - has to be asked for explicitly. This also registers the
+        // callback that fires IP_EVENT_GOT_IP6 once it's verified, and once
+        // that link-local address exists, SLAAC (CONFIG_LWIP_IPV6_AUTOCONFIG)
+        // can proceed to add a routable/ULA address from the router's RA.
+        if (esp_netif_create_ip6_linklocal(s_eth_netif) != ESP_OK) {
+            ESP_LOGW(TAG, "esp_netif_create_ip6_linklocal failed - IPv6 won't be available");
+        }
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "link down");
@@ -95,6 +103,13 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     if (s_event_group != NULL) {
         xEventGroupSetBits(s_event_group, ETH_INIT_GOT_IP_BIT);
     }
+}
+
+static void got_ip6_event_handler(void *arg, esp_event_base_t event_base,
+                                   int32_t event_id, void *event_data)
+{
+    const ip_event_got_ip6_t *event = (const ip_event_got_ip6_t *)event_data;
+    ESP_LOGI(TAG, "got IPv6:" IPV6STR, IPV62STR(event->ip6_info.ip));
 }
 
 esp_err_t eth_init_start(void)
@@ -162,6 +177,8 @@ esp_err_t eth_init_start(void)
                          TAG, "eth event handler register failed");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL),
                          TAG, "ip event handler register failed");
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, &got_ip6_event_handler, NULL),
+                         TAG, "ip6 event handler register failed");
 
     if (app_config_get_net_mode() == APP_CONFIG_NET_STATIC) {
         esp_netif_ip_info_t ip_info;

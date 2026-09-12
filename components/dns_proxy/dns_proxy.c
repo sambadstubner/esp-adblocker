@@ -1,6 +1,7 @@
 #include "dns_proxy.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -39,7 +40,9 @@ static bool s_bloom_mmap_active = false;
 
 typedef struct {
     bool in_use;
-    struct sockaddr_in client_addr;
+    int reply_sock; // whichever of s_listen_sock_v4/v6 this query arrived on - the reply must go back out the same one
+    struct sockaddr_storage client_addr;
+    socklen_t client_addr_len;
     uint16_t client_txid;
     int64_t sent_at_us;
     size_t query_len;
@@ -47,7 +50,8 @@ typedef struct {
 } pending_query_t;
 
 static pending_query_t s_pending[CONFIG_DNS_PROXY_MAX_PENDING];
-static int s_listen_sock = -1;
+static int s_listen_sock_v4 = -1;
+static int s_listen_sock_v6 = -1;
 static int s_upstream_sock = -1;
 static uint8_t s_upstream_index = 0; // 0 -> upstream1, 1 -> upstream2
 static int s_consecutive_timeouts = 0;
@@ -152,10 +156,37 @@ static int find_free_slot(void)
     return -1;
 }
 
-static void send_error_to_client(const struct sockaddr_in *to, uint8_t *buf, size_t len, uint8_t rcode)
+static void send_error_to_client(int sock, const struct sockaddr *to, socklen_t addr_len, uint8_t *buf, size_t len, uint8_t rcode)
 {
     dns_wire_make_error_response(buf, len, rcode);
-    sendto(s_listen_sock, buf, len, 0, (const struct sockaddr *)to, sizeof(*to));
+    sendto(sock, buf, len, 0, to, addr_len);
+}
+
+// Formats either family into a caller-provided buffer, for logging - callers
+// should size buf as char[INET6_ADDRSTRLEN] (46 bytes), large enough for both.
+static const char *format_sockaddr(const struct sockaddr *sa, char *buf, size_t buflen)
+{
+    if (sa->sa_family == AF_INET) {
+        inet_ntop(AF_INET, &((const struct sockaddr_in *)sa)->sin_addr, buf, buflen);
+    } else if (sa->sa_family == AF_INET6) {
+        inet_ntop(AF_INET6, &((const struct sockaddr_in6 *)sa)->sin6_addr, buf, buflen);
+    } else {
+        snprintf(buf, buflen, "?");
+    }
+    return buf;
+}
+
+static dns_client_addr_t sockaddr_to_client_addr(const struct sockaddr *sa)
+{
+    dns_client_addr_t out = { 0 };
+    if (sa->sa_family == AF_INET) {
+        out.family = AF_INET;
+        memcpy(out.addr, &((const struct sockaddr_in *)sa)->sin_addr, 4);
+    } else if (sa->sa_family == AF_INET6) {
+        out.family = AF_INET6;
+        memcpy(out.addr, &((const struct sockaddr_in6 *)sa)->sin6_addr, 16);
+    }
+    return out;
 }
 
 static bool try_load_bloom_from_partition(uint8_t slot)
@@ -292,14 +323,14 @@ static bool is_allowlisted(const char *qname)
     return false;
 }
 
-static void log_query(uint32_t client_ip, const char *qname, uint16_t qtype, dns_proxy_query_result_t result)
+static void log_query(const struct sockaddr *client_addr, const char *qname, uint16_t qtype, dns_proxy_query_result_t result)
 {
     if (s_query_log_mutex == NULL || xSemaphoreTake(s_query_log_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         return; // diagnostic-only feature - never worth blocking the hot path over
     }
     dns_proxy_query_log_entry_t *e = &s_query_log[s_query_log_next];
     e->time_us = esp_timer_get_time();
-    e->client_ip = client_ip;
+    e->client_addr = sockaddr_to_client_addr(client_addr);
     e->qtype = qtype;
     e->result = result;
     strncpy(e->qname, qname, sizeof(e->qname) - 1);
@@ -332,7 +363,7 @@ size_t dns_proxy_get_query_log(dns_proxy_query_log_entry_t *out, size_t max_entr
  * Returns true if the query was blocked (and a response was already sent to
  * the client) - caller must not forward the query upstream in that case.
  */
-static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_t n,
+static bool try_block(int reply_sock, const struct sockaddr *client_addr, socklen_t addr_len, uint8_t *buf, size_t n,
                        const dns_wire_question_t *q)
 {
     if (!app_config_get_blocking_enabled() || !s_bloom_ready || !bloom_filter_test(&s_bloom, q->qname)) {
@@ -364,30 +395,32 @@ static bool try_block(const struct sockaddr_in *client_addr, uint8_t *buf, size_
     } else {
         dns_wire_make_error_response(buf, n, DNS_RCODE_NXDOMAIN);
     }
-    sendto(s_listen_sock, buf, resp_len, 0, (const struct sockaddr *)client_addr, sizeof(*client_addr));
+    sendto(reply_sock, buf, resp_len, 0, client_addr, addr_len);
     ESP_LOGI(TAG, "blocked %s (sd_confirm=%d)", q->qname, (int)confirm);
     return true;
 }
 
-static void handle_client_datagram(void)
+static void handle_client_datagram(int listen_sock)
 {
     uint8_t buf[DNS_WIRE_MAX_MSG_LEN];
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    int n = recvfrom(s_listen_sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
+    int n = recvfrom(listen_sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
     if (n <= 0) {
         return;
     }
     s_stats.queries_total++;
+    const struct sockaddr *client_sa = (const struct sockaddr *)&client_addr;
 
     dns_wire_question_t q;
     bool have_question = dns_wire_parse_question(buf, (size_t)n, &q);
     if (have_question) {
-        ESP_LOGD(TAG, "query from %s: %s type=%u", inet_ntoa(client_addr.sin_addr), q.qname, q.qtype);
-        if (try_block(&client_addr, buf, (size_t)n, &q)) {
+        char addrstr[INET6_ADDRSTRLEN];
+        ESP_LOGD(TAG, "query from %s: %s type=%u", format_sockaddr(client_sa, addrstr, sizeof(addrstr)), q.qname, q.qtype);
+        if (try_block(listen_sock, client_sa, addr_len, buf, (size_t)n, &q)) {
             s_stats.queries_blocked++;
             record_blocked_for_rolling_window();
-            log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_BLOCKED);
+            log_query(client_sa, q.qname, q.qtype, DNS_PROXY_RESULT_BLOCKED);
             return; // blocked - do not forward upstream
         }
     }
@@ -397,16 +430,18 @@ static void handle_client_datagram(void)
     int slot = find_free_slot();
     if (slot < 0) {
         ESP_LOGW(TAG, "pending table full, replying SERVFAIL immediately");
-        send_error_to_client(&client_addr, buf, (size_t)n, DNS_RCODE_SERVFAIL);
+        send_error_to_client(listen_sock, client_sa, addr_len, buf, (size_t)n, DNS_RCODE_SERVFAIL);
         s_stats.queries_servfail++;
         if (have_question) {
-            log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
+            log_query(client_sa, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
         }
         return;
     }
 
     pending_query_t *p = &s_pending[slot];
+    p->reply_sock = listen_sock;
     p->client_addr = client_addr;
+    p->client_addr_len = addr_len;
     p->client_txid = client_txid;
     p->sent_at_us = esp_timer_get_time();
     p->query_len = (size_t)n;
@@ -421,7 +456,7 @@ static void handle_client_datagram(void)
     p->in_use = true;
     s_stats.queries_forwarded++;
     if (have_question) {
-        log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_FORWARDED);
+        log_query(client_sa, q.qname, q.qtype, DNS_PROXY_RESULT_FORWARDED);
     }
 }
 
@@ -439,7 +474,7 @@ static void handle_upstream_datagram(void)
     }
     pending_query_t *p = &s_pending[slot_txid];
     dns_wire_set_txid(buf, (size_t)n, p->client_txid);
-    sendto(s_listen_sock, buf, (size_t)n, 0, (const struct sockaddr *)&p->client_addr, sizeof(p->client_addr));
+    sendto(p->reply_sock, buf, (size_t)n, 0, (const struct sockaddr *)&p->client_addr, p->client_addr_len);
     p->in_use = false;
     s_consecutive_timeouts = 0;
 }
@@ -455,10 +490,11 @@ static void sweep_timeouts(void)
         }
         ESP_LOGW(TAG, "upstream timeout for txid=%u", p->client_txid);
         dns_wire_set_txid(p->query_buf, p->query_len, p->client_txid);
-        send_error_to_client(&p->client_addr, p->query_buf, p->query_len, DNS_RCODE_SERVFAIL);
+        send_error_to_client(p->reply_sock, (const struct sockaddr *)&p->client_addr, p->client_addr_len,
+                              p->query_buf, p->query_len, DNS_RCODE_SERVFAIL);
         dns_wire_question_t q;
         if (dns_wire_parse_question(p->query_buf, p->query_len, &q)) {
-            log_query(p->client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
+            log_query((const struct sockaddr *)&p->client_addr, q.qname, q.qtype, DNS_PROXY_RESULT_SERVFAIL);
         }
         p->in_use = false;
         s_stats.queries_servfail++;
@@ -475,15 +511,21 @@ static void dns_proxy_task(void *arg)
     for (;;) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(s_listen_sock, &rfds);
+        FD_SET(s_listen_sock_v4, &rfds);
+        FD_SET(s_listen_sock_v6, &rfds);
         FD_SET(s_upstream_sock, &rfds);
-        int maxfd = (s_listen_sock > s_upstream_sock) ? s_listen_sock : s_upstream_sock;
+        int maxfd = s_listen_sock_v4;
+        if (s_listen_sock_v6 > maxfd) maxfd = s_listen_sock_v6;
+        if (s_upstream_sock > maxfd) maxfd = s_upstream_sock;
 
         struct timeval tv = { .tv_sec = 0, .tv_usec = 200 * 1000 };
         int ready = select(maxfd + 1, &rfds, NULL, NULL, &tv);
         if (ready > 0) {
-            if (FD_ISSET(s_listen_sock, &rfds)) {
-                handle_client_datagram();
+            if (FD_ISSET(s_listen_sock_v4, &rfds)) {
+                handle_client_datagram(s_listen_sock_v4);
+            }
+            if (FD_ISSET(s_listen_sock_v6, &rfds)) {
+                handle_client_datagram(s_listen_sock_v6);
             }
             if (FD_ISSET(s_upstream_sock, &rfds)) {
                 handle_upstream_datagram();
@@ -535,10 +577,26 @@ esp_err_t dns_proxy_start(void)
         .sin_port = htons(CONFIG_DNS_PROXY_PORT),
         .sin_addr.s_addr = htonl(INADDR_ANY),
     };
-    s_listen_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    ESP_RETURN_ON_FALSE(s_listen_sock >= 0, ESP_FAIL, TAG, "listen socket() failed: errno %d", errno);
-    ESP_RETURN_ON_FALSE(bind(s_listen_sock, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) == 0,
+    s_listen_sock_v4 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ESP_RETURN_ON_FALSE(s_listen_sock_v4 >= 0, ESP_FAIL, TAG, "listen socket() failed: errno %d", errno);
+    ESP_RETURN_ON_FALSE(bind(s_listen_sock_v4, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) == 0,
                          ESP_FAIL, TAG, "bind() failed: errno %d", errno);
+
+    struct sockaddr_in6 listen_addr6 = {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(CONFIG_DNS_PROXY_PORT),
+        .sin6_addr = IN6ADDR_ANY_INIT,
+    };
+    s_listen_sock_v6 = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    ESP_RETURN_ON_FALSE(s_listen_sock_v6 >= 0, ESP_FAIL, TAG, "listen socket() (v6) failed: errno %d", errno);
+    // Without this, an AF_INET6 socket bound to :: would also accept IPv4
+    // traffic (IPv4-mapped addresses), colliding with the separate v4-only
+    // socket already bound to the same port.
+    int v6only = 1;
+    ESP_RETURN_ON_FALSE(setsockopt(s_listen_sock_v6, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) == 0,
+                         ESP_FAIL, TAG, "setsockopt(IPV6_V6ONLY) failed: errno %d", errno);
+    ESP_RETURN_ON_FALSE(bind(s_listen_sock_v6, (struct sockaddr *)&listen_addr6, sizeof(listen_addr6)) == 0,
+                         ESP_FAIL, TAG, "bind() (v6) failed: errno %d", errno);
 
     ESP_RETURN_ON_ERROR(connect_upstream_socket(), TAG, "initial upstream connect failed");
 
@@ -546,6 +604,6 @@ esp_err_t dns_proxy_start(void)
                                  CONFIG_DNS_PROXY_TASK_PRIORITY, NULL);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "xTaskCreate failed");
 
-    ESP_LOGI(TAG, "listening on UDP :%d", CONFIG_DNS_PROXY_PORT);
+    ESP_LOGI(TAG, "listening on UDP :%d (IPv4 + IPv6)", CONFIG_DNS_PROXY_PORT);
     return ESP_OK;
 }

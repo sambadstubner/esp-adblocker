@@ -77,9 +77,18 @@ typedef enum {
 
 #define DNS_PROXY_QUERY_LOG_NAME_LEN 255
 
+// Family-tagged client address, compact enough to keep in the query log
+// without pulling in a full struct sockaddr_storage per entry. addr holds a
+// 4-byte IPv4 or 16-byte IPv6 address in network byte order, family is
+// AF_INET or AF_INET6.
+typedef struct {
+    uint8_t family;
+    uint8_t addr[16];
+} dns_client_addr_t;
+
 typedef struct {
     int64_t time_us;      // esp_timer_get_time() when logged
-    uint32_t client_ip;   // wire-order IPv4, same representation as sockaddr_in.sin_addr.s_addr
+    dns_client_addr_t client_addr;
     uint16_t qtype;
     dns_proxy_query_result_t result;
     char qname[DNS_PROXY_QUERY_LOG_NAME_LEN];

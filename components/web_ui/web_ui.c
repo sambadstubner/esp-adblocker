@@ -1,7 +1,9 @@
 #include "web_ui.h"
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include "app_config.h"
 #include "blocklist_updater.h"
@@ -80,6 +82,18 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         cJSON_AddStringToObject(root, "eth_mask", esp_ip4addr_ntoa(&ip_info.netmask, buf, sizeof(buf)));
         cJSON_AddStringToObject(root, "eth_gw", esp_ip4addr_ntoa(&ip_info.gw, buf, sizeof(buf)));
     }
+
+    cJSON *ip6_arr = cJSON_CreateArray();
+    if (netif != NULL) {
+        esp_ip6_addr_t ip6_addrs[CONFIG_LWIP_IPV6_NUM_ADDRESSES];
+        int n_ip6 = esp_netif_get_all_ip6(netif, ip6_addrs);
+        for (int i = 0; i < n_ip6; i++) {
+            char ip6str[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, ip6_addrs[i].addr, ip6str, sizeof(ip6str));
+            cJSON_AddItemToArray(ip6_arr, cJSON_CreateString(ip6str));
+        }
+    }
+    cJSON_AddItemToObject(root, "eth_ip6", ip6_arr);
 
     cJSON_AddStringToObject(root, "fw_version", esp_app_get_description()->version);
     cJSON_AddNumberToObject(root, "free_heap", (double)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -285,8 +299,13 @@ static esp_err_t querylog_get_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(e, "qtype", entries[i].qtype);
         cJSON_AddNumberToObject(e, "result", entries[i].result);
         cJSON_AddNumberToObject(e, "seconds_ago", (double)((now - entries[i].time_us) / 1000000));
-        struct in_addr client = { .s_addr = entries[i].client_ip };
-        cJSON_AddStringToObject(e, "client_ip", inet_ntoa(client));
+        char ipstr[INET6_ADDRSTRLEN];
+        if (entries[i].client_addr.family == AF_INET6) {
+            inet_ntop(AF_INET6, entries[i].client_addr.addr, ipstr, sizeof(ipstr));
+        } else {
+            inet_ntop(AF_INET, entries[i].client_addr.addr, ipstr, sizeof(ipstr));
+        }
+        cJSON_AddStringToObject(e, "client_ip", ipstr);
         cJSON_AddItemToArray(arr, e);
     }
     heap_caps_free(entries);
