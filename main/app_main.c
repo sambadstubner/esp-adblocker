@@ -20,7 +20,7 @@ static const char *TAG = "app_main";
 // the device downloads/reboots/self-confirms, then flip back to 0. Remove once
 // Phase 7's web UI can trigger an update at runtime.
 #define FW_UPDATER_TRIGGER_TEST 0
-#define FW_UPDATER_TEST_URL "https://github.com/sambadstubner/esp-dns/releases/download/PLACEHOLDER/esp-dns.bin"
+#define FW_UPDATER_TEST_URL "https://github.com/sambadstubner/esp-dns/releases/download/v0.1.0/esp-dns.bin"
 
 // Phase 2 (app_config/NVS) hardware verification scaffolding: flip to 1, flash, confirm
 // the device comes up static at 192.168.1.50 with the overridden upstream/policy, then

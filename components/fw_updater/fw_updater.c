@@ -18,6 +18,10 @@ esp_err_t fw_updater_check_and_update(const char *url)
         .url = url,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .keep_alive_enable = true,
+        // GitHub's redirect/asset response headers exceed esp_http_client's
+        // default 512-byte buffer ("Out of buffer" / ESP_FAIL otherwise).
+        .buffer_size = 4096,
+        .buffer_size_tx = 2048,
         // disable_auto_redirect defaults to false: GitHub Release asset URLs
         // redirect to objects.githubusercontent.com, so this must stay on.
     };
