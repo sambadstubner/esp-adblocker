@@ -51,7 +51,7 @@ static void log_current_config(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "esp-dns starting");
+    ESP_LOGI(TAG, "esp-adblocker starting");
     ESP_LOGI(TAG, "free PSRAM: %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     ESP_LOGI(TAG, "free internal RAM: %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 

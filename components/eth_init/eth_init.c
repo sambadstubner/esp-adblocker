@@ -14,8 +14,8 @@
 
 static const char *TAG = "eth_init";
 
-#define MDNS_HOSTNAME "esp-dns"
-#define MDNS_INSTANCE_NAME "esp-dns ad blocker"
+#define MDNS_HOSTNAME "esp-adblocker"
+#define MDNS_INSTANCE_NAME "esp-adblocker"
 
 static esp_netif_t *s_eth_netif = NULL;
 static esp_eth_handle_t s_eth_handle = NULL;
@@ -152,7 +152,7 @@ esp_err_t eth_init_start(void)
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
     s_eth_netif = esp_netif_new(&netif_config);
     // Sets the hostname DHCP option (12) sent in lease requests, so the
-    // router's client list shows "esp-dns" instead of a MAC address. Must be
+    // router's client list shows "esp-adblocker" instead of a MAC address. Must be
     // set before esp_eth_start() below brings the DHCP client up.
     ESP_RETURN_ON_ERROR(esp_netif_set_hostname(s_eth_netif, MDNS_HOSTNAME), TAG, "set hostname failed");
     esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);

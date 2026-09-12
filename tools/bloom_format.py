@@ -1,5 +1,5 @@
 """
-Canonical spec for the esp-dns bloom filter: hash function, sizing math, and
+Canonical spec for the esp-adblocker bloom filter: hash function, sizing math, and
 the bloom.bin file format.
 
 THIS FILE IS THE SOURCE OF TRUTH. components/bloom_filter/fnv1a64.c and

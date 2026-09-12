@@ -1,4 +1,4 @@
-# esp-dns
+# esp-adblocker
 
 A network-wide DNS-based ad/tracker blocker that runs entirely on a single
 [Waveshare ESP32-S3-ETH](https://www.waveshare.com/wiki/ESP32-S3-ETH) board,
@@ -30,9 +30,9 @@ lookup, so ordinary traffic never leaves PSRAM.
   list over HTTPS, validates it (header/CRC32 for the filter, SHA-256 for the
   exact list), and only activates it after validation - a failed or
   power-interrupted update never disturbs what's currently serving.
-- **Web UI** - status page and live settings at `http://esp-dns.local/`, no
+- **Web UI** - status page and live settings at `http://esp-adblocker.local/`, no
   app or account required.
-- **mDNS** - reachable as `esp-dns.local` out of the box on macOS/iOS/Linux.
+- **mDNS** - reachable as `esp-adblocker.local` out of the box on macOS/iOS/Linux.
 
 ## Hardware
 
@@ -59,9 +59,9 @@ etched onto the board. Just insert a microSD card and connect Ethernet.
      0x0     bootloader.bin \
      0x8000  partition-table.bin \
      0xf000  ota_data_initial.bin \
-     0x20000 esp-dns.bin
+     0x20000 esp-adblocker.bin
    ```
-3. **Find the device.** It gets an IP via DHCP; open `http://esp-dns.local/`
+3. **Find the device.** It gets an IP via DHCP; open `http://esp-adblocker.local/`
    (macOS/iOS/Linux) or check your router's device list. The status page
    shows its current IP if you need it.
 4. **Publish a block list** (or use someone else's HTTPS-reachable one) - see
@@ -170,11 +170,11 @@ touch either, run the cross-check test above before trusting the result.
 
 ```
 idf.py build
-gh release create vX.Y.Z build/esp-dns.bin --title vX.Y.Z
+gh release create vX.Y.Z build/esp-adblocker.bin --title vX.Y.Z
 ```
 
 Point a device's **Firmware release URL** at the resulting asset URL
-(`.../releases/download/vX.Y.Z/esp-dns.bin`) and trigger **Check firmware
+(`.../releases/download/vX.Y.Z/esp-adblocker.bin`) and trigger **Check firmware
 update** from the web UI, or wait - OTA is manual-trigger only, there is no
 automatic firmware auto-update (unlike the blocklist).
 

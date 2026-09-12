@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Builds bloom.bin + domains.idx from one or more hosts-format blocklist
-sources, for the esp-dns firmware to consume.
+sources, for the esp-adblocker firmware to consume.
 
 Usage:
     python3 blocklist_build.py --source hosts.txt --out-dir build/ \\
