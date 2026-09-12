@@ -220,6 +220,7 @@ async function loadStatus() {
     statRow('Ethernet IP', s.eth_ip || '—') +
     statRow('Queries total', s.queries_total) +
     statRow('Queries blocked', s.queries_blocked) +
+    statRow('Blocked (last 24h)', s.queries_blocked_24h) +
     statRow('Forwarded', s.queries_forwarded) +
     statRow('SERVFAIL', s.queries_servfail) +
     statRow('Bloom filter', bloomState) +

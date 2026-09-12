@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <time.h>
 
 #include "app_config.h"
 #include "bloom_filter.h"
@@ -52,6 +53,20 @@ static uint8_t s_upstream_index = 0; // 0 -> upstream1, 1 -> upstream2
 static int s_consecutive_timeouts = 0;
 static dns_proxy_stats_t s_stats;
 
+// Rolling 24h blocked-query count, as 24 hourly buckets keyed by wall-clock
+// hour (time(NULL)/3600, SNTP-synced) rather than esp_timer_get_time() -
+// unlike the lifetime s_stats.queries_blocked counter, this should reflect
+// "the last day" in real time and survive being read across a reboot, not
+// reset to 0 whenever the device restarts. A bucket's hour_id doubles as its
+// own staleness marker: reading sums only buckets within the last 24h, so an
+// hour with no blocks (including one from a full day+ ago whose slot hasn't
+// been touched since) naturally reads as 0 with no separate clearing pass
+// needed. Plain counters, no mutex - same benign-race tolerance as s_stats,
+// which this sits alongside.
+#define BLOCKED_HISTORY_HOURS 24
+static uint32_t s_blocked_hour_count[BLOCKED_HISTORY_HOURS];
+static int64_t s_blocked_hour_id[BLOCKED_HISTORY_HOURS];
+
 // User-managed allowlist (see app_config_get/set_allowlist). Small and rarely
 // checked (only on a bloom-positive), so a plain linear scan is plenty fast -
 // no need for the sorted-array/bsearch treatment sd_storage uses for the
@@ -69,6 +84,29 @@ static SemaphoreHandle_t s_query_log_mutex = NULL;
 static uint32_t current_upstream_ip(void)
 {
     return s_upstream_index == 0 ? app_config_get_upstream1() : app_config_get_upstream2();
+}
+
+static void record_blocked_for_rolling_window(void)
+{
+    int64_t hour_id = time(NULL) / 3600;
+    size_t idx = (size_t)(hour_id % BLOCKED_HISTORY_HOURS);
+    if (s_blocked_hour_id[idx] != hour_id) {
+        s_blocked_hour_id[idx] = hour_id;
+        s_blocked_hour_count[idx] = 0;
+    }
+    s_blocked_hour_count[idx]++;
+}
+
+static uint32_t blocked_last_24h(void)
+{
+    int64_t current_hour = time(NULL) / 3600;
+    uint32_t total = 0;
+    for (size_t i = 0; i < BLOCKED_HISTORY_HOURS; i++) {
+        if (s_blocked_hour_id[i] > current_hour - BLOCKED_HISTORY_HOURS) {
+            total += s_blocked_hour_count[i];
+        }
+    }
+    return total;
 }
 
 static esp_err_t connect_upstream_socket(void)
@@ -348,6 +386,7 @@ static void handle_client_datagram(void)
         ESP_LOGD(TAG, "query from %s: %s type=%u", inet_ntoa(client_addr.sin_addr), q.qname, q.qtype);
         if (try_block(&client_addr, buf, (size_t)n, &q)) {
             s_stats.queries_blocked++;
+            record_blocked_for_rolling_window();
             log_query(client_addr.sin_addr.s_addr, q.qname, q.qtype, DNS_PROXY_RESULT_BLOCKED);
             return; // blocked - do not forward upstream
         }
@@ -457,6 +496,7 @@ static void dns_proxy_task(void *arg)
 void dns_proxy_get_stats(dns_proxy_stats_t *out)
 {
     *out = s_stats;
+    out->queries_blocked_24h = blocked_last_24h();
 }
 
 void dns_proxy_get_bloom_info(dns_proxy_bloom_info_t *out)

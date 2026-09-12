@@ -14,6 +14,7 @@ typedef struct {
     uint32_t queries_blocked;
     uint32_t queries_forwarded;
     uint32_t queries_servfail;
+    uint32_t queries_blocked_24h; // rolling wall-clock window, unlike queries_blocked which is lifetime-since-boot
     int64_t start_time_us; // esp_timer_get_time() at dns_proxy_start()
 } dns_proxy_stats_t;
 

@@ -62,6 +62,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "queries_blocked", stats.queries_blocked);
     cJSON_AddNumberToObject(root, "queries_forwarded", stats.queries_forwarded);
     cJSON_AddNumberToObject(root, "queries_servfail", stats.queries_servfail);
+    cJSON_AddNumberToObject(root, "queries_blocked_24h", stats.queries_blocked_24h);
 
     cJSON_AddBoolToObject(root, "bloom_ready", bloom.ready);
     cJSON_AddBoolToObject(root, "bloom_from_seed", bloom.from_embedded_seed);
