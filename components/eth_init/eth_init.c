@@ -9,8 +9,12 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "freertos/event_groups.h"
+#include "mdns.h"
 
 static const char *TAG = "eth_init";
+
+#define MDNS_HOSTNAME "esp-dns"
+#define MDNS_INSTANCE_NAME "esp-dns ad blocker"
 
 static esp_netif_t *s_eth_netif = NULL;
 static esp_eth_handle_t s_eth_handle = NULL;
@@ -133,6 +137,15 @@ esp_err_t eth_init_start(void)
     }
 
     ESP_RETURN_ON_ERROR(esp_eth_start(s_eth_handle), TAG, "driver start failed");
+
+    esp_err_t mdns_err = mdns_init();
+    if (mdns_err == ESP_OK) {
+        mdns_hostname_set(MDNS_HOSTNAME);
+        mdns_instance_name_set(MDNS_INSTANCE_NAME);
+        ESP_LOGI(TAG, "mDNS hostname set: http://%s.local/", MDNS_HOSTNAME);
+    } else {
+        ESP_LOGW(TAG, "mdns_init failed: %s (device will still be reachable by IP)", esp_err_to_name(mdns_err));
+    }
 
     return ESP_OK;
 }
