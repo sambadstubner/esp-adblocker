@@ -8,12 +8,33 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "eth_init.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "fw_updater.h"
 #include "nvs_flash.h"
 #include "sd_storage.h"
 #include "web_ui.h"
 
 static const char *TAG = "app_main";
+
+#define HEAP_LOG_INTERVAL_MS (10UL * 60UL * 1000UL) // 10 min - cheap enough to run indefinitely during a soak
+
+// Logs current AND minimum-ever-free heap/PSRAM periodically. The minimum is
+// the useful signal for leak detection over a multi-day soak: a slow leak
+// shows up as that floor trending down over time even if instantaneous
+// free-heap looks fine at any single sample point.
+static void heap_monitor_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(HEAP_LOG_INTERVAL_MS));
+        ESP_LOGI(TAG, "heap: internal free=%u min=%u | psram free=%u min=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    }
+}
 
 static void log_current_config(void)
 {
@@ -76,4 +97,8 @@ void app_main(void)
     if (web_err != ESP_OK) {
         ESP_LOGE(TAG, "web UI start failed: %s", esp_err_to_name(web_err));
     }
+
+    blocklist_updater_start_periodic_refresh();
+
+    xTaskCreate(heap_monitor_task, "heap_monitor", 2048, NULL, 2, NULL);
 }

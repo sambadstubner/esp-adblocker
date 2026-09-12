@@ -140,6 +140,10 @@
     </div>
     <div class="msg" id="blocklist-msg"></div>
 
+    <label>Auto-refresh blocklist every (hours, 0 = off)</label>
+    <input type="text" id="refresh-interval" placeholder="24" style="max-width:100px" onchange="saveRefreshInterval()">
+    <div class="hint">Applies live - no reboot needed.</div>
+
     <label>Firmware release URL</label>
     <div class="url-row">
       <input type="text" id="fw-url" placeholder="https://github.com/you/repo/releases/download/vX/esp-dns.bin">
@@ -208,6 +212,7 @@ async function loadConfig() {
   document.getElementById('static-mask').value = c.static_mask || '';
   document.getElementById('static-gw').value = c.static_gw || '';
   document.getElementById('blocklist-url').value = c.blocklist_url || '';
+  document.getElementById('refresh-interval').value = c.blocklist_refresh_interval_hours;
   document.getElementById('fw-url').value = c.fw_update_url || '';
   updateNetModeVisibility();
 }
@@ -246,6 +251,12 @@ async function saveSettings() {
   } else {
     showMsg('settings-msg', res.error || 'Failed to save.', false);
   }
+}
+
+async function saveRefreshInterval() {
+  const hours = parseInt(document.getElementById('refresh-interval').value, 10) || 0;
+  const res = await postConfig({ blocklist_refresh_interval_hours: hours });
+  showMsg('blocklist-msg', res.ok ? 'Saved.' : (res.error || 'Failed to save.'), res.ok);
 }
 
 async function saveUrl(field, inputId, msgId) {

@@ -110,6 +110,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     char url_buf[MAX_URL_FIELD_LEN];
     app_config_get_blocklist_url(url_buf, sizeof(url_buf));
     cJSON_AddStringToObject(root, "blocklist_url", url_buf);
+    cJSON_AddNumberToObject(root, "blocklist_refresh_interval_hours", app_config_get_blocklist_refresh_interval_hours());
     app_config_get_fw_update_url(url_buf, sizeof(url_buf));
     cJSON_AddStringToObject(root, "fw_update_url", url_buf);
 
@@ -189,6 +190,10 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     item = cJSON_GetObjectItem(json, "blocklist_url");
     if (cJSON_IsString(item)) {
         app_config_set_blocklist_url(item->valuestring);
+    }
+    item = cJSON_GetObjectItem(json, "blocklist_refresh_interval_hours");
+    if (cJSON_IsNumber(item)) {
+        app_config_set_blocklist_refresh_interval_hours((uint32_t)item->valuedouble);
     }
     item = cJSON_GetObjectItem(json, "fw_update_url");
     if (cJSON_IsString(item)) {

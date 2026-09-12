@@ -8,6 +8,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_netif_sntp.h"
 #include "freertos/event_groups.h"
 #include "mdns.h"
 
@@ -145,6 +146,18 @@ esp_err_t eth_init_start(void)
         ESP_LOGI(TAG, "mDNS hostname set: http://%s.local/", MDNS_HOSTNAME);
     } else {
         ESP_LOGW(TAG, "mdns_init failed: %s (device will still be reachable by IP)", esp_err_to_name(mdns_err));
+    }
+
+    // A freshly-flashed device boots with its clock at epoch 0, which would
+    // make TLS certificate validity checks (notBefore/notAfter) wrong for
+    // fw_updater/blocklist_updater's HTTPS fetches. Syncs opportunistically
+    // in the background once the network is up; no explicit wait here since
+    // both of those callers already wait ~30s for IP via eth_init_wait_for_ip(),
+    // which is far longer than SNTP typically needs to complete a first sync.
+    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    esp_err_t sntp_err = esp_netif_sntp_init(&sntp_config);
+    if (sntp_err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_netif_sntp_init failed: %s", esp_err_to_name(sntp_err));
     }
 
     return ESP_OK;

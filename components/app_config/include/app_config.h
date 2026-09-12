@@ -55,6 +55,10 @@ esp_err_t app_config_set_blocking_enabled(bool enabled);
 esp_err_t app_config_get_blocklist_url(char *out_buf, size_t buf_len);
 esp_err_t app_config_set_blocklist_url(const char *url);
 
+/** Automatic blocklist refresh interval in hours; 0 disables periodic refresh. Default 24. */
+uint32_t app_config_get_blocklist_refresh_interval_hours(void);
+esp_err_t app_config_set_blocklist_refresh_interval_hours(uint32_t hours);
+
 /** Which of the two bloom.bin flash slots (0="bloom_a", 1="bloom_b") is currently active. */
 uint8_t app_config_get_bloom_active_slot(void);
 esp_err_t app_config_set_bloom_active_slot(uint8_t slot);

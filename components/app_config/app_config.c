@@ -120,6 +120,19 @@ esp_err_t app_config_set_blocklist_url(const char *url)
     return nvs_commit(s_handle);
 }
 
+uint32_t app_config_get_blocklist_refresh_interval_hours(void)
+{
+    uint32_t v = 24;
+    nvs_get_u32(s_handle, "refresh_hrs", &v);
+    return v;
+}
+
+esp_err_t app_config_set_blocklist_refresh_interval_hours(uint32_t hours)
+{
+    ESP_RETURN_ON_ERROR(nvs_set_u32(s_handle, "refresh_hrs", hours), TAG, "set refresh_hrs failed");
+    return nvs_commit(s_handle);
+}
+
 uint8_t app_config_get_bloom_active_slot(void)
 {
     uint8_t v = 0;

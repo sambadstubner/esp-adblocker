@@ -293,3 +293,36 @@ void blocklist_updater_check_and_apply_async(const char *base_url)
         free(url_copy);
     }
 }
+
+#define DISABLED_RECHECK_INTERVAL_MS (60UL * 60UL * 1000UL) // re-check config hourly while disabled/unconfigured
+
+static void periodic_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t hours = app_config_get_blocklist_refresh_interval_hours();
+        if (hours == 0) {
+            vTaskDelay(pdMS_TO_TICKS(DISABLED_RECHECK_INTERVAL_MS));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(hours * 3600UL * 1000UL));
+
+        char url[MAX_URL_LEN];
+        app_config_get_blocklist_url(url, sizeof(url));
+        if (url[0] == '\0') {
+            ESP_LOGI(TAG, "periodic refresh: blocklist_url not configured, skipping");
+            continue;
+        }
+        if (!eth_init_wait_for_ip(pdMS_TO_TICKS(ASYNC_NETWORK_WAIT_MS))) {
+            ESP_LOGW(TAG, "periodic refresh: network not ready, skipping this cycle");
+            continue;
+        }
+        esp_err_t err = blocklist_updater_check_and_apply(url);
+        ESP_LOGI(TAG, "periodic blocklist refresh result: %s", esp_err_to_name(err));
+    }
+}
+
+void blocklist_updater_start_periodic_refresh(void)
+{
+    xTaskCreate(periodic_task, "blocklist_auto", ASYNC_TASK_STACK_SIZE, NULL, 3, NULL);
+}

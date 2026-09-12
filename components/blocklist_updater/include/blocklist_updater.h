@@ -43,6 +43,15 @@ esp_err_t blocklist_updater_check_and_apply(const char *base_url);
  */
 void blocklist_updater_check_and_apply_async(const char *base_url);
 
+/**
+ * Starts a background task that periodically calls blocklist_updater_check_and_apply()
+ * using app_config's blocklist_url and blocklist_refresh_interval_hours, re-read on
+ * every cycle so changing either via the web UI takes effect without a reboot.
+ * An interval of 0 pauses refreshing (re-checked hourly in case it's re-enabled).
+ * Call once from app_main; safe no-op-until-configured if blocklist_url is empty.
+ */
+void blocklist_updater_start_periodic_refresh(void);
+
 #ifdef __cplusplus
 }
 #endif
